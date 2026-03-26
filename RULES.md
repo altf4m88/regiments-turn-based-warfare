@@ -1,6 +1,6 @@
-# ⚔️ Napoleonic Tactics: Rules of Engagement
+# ⚔️ Regiments
 
-Welcome to **Napoleonic Tactics**, a turn-based strategy game of maneuver, supply, and attrition.
+Welcome to **Regiments**, a turn-based strategy game of maneuver, supply, and attrition.
 
 ---
 

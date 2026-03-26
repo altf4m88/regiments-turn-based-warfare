@@ -294,7 +294,13 @@ export const getInitialState = (): GameState => {
     capturePointOwner: null,
     capturePointTurns: 0,
     battlefieldLogs: ["Welcome Commander. 19th Century Warfare Simulation Active."],
-    cliHistory: []
+    cliHistory: [],
+    gameMode: null,
+    aiConfigs: {
+      1: { apiKey: '', model: 'gemini-3-flash-preview', langsmithApiKey: '', langsmithProject: 'regiments-p1' },
+      2: { apiKey: '', model: 'gemini-3-flash-preview', langsmithApiKey: '', langsmithProject: 'regiments-p2' }
+    },
+    monologueHistory: []
   };
 };
 

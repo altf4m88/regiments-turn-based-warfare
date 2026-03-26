@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Shield, 
@@ -11,6 +11,8 @@ import {
   Move, 
   Users, 
   ChevronRight, 
+  ChevronDown,
+  ChevronUp,
   RotateCcw, 
   Flag,
   Target,
@@ -31,12 +33,17 @@ import {
   Fence,
   Bomb,
   CircleDot,
-  Terminal
+  Terminal,
+  Settings,
+  Cpu,
+  X
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
-import { Regiment, Tile, GameState, UnitType, Facing, GameAnimation } from './game/types';
+import { GoogleGenAI } from "@google/genai";
+import { Client } from "langsmith";
+import { Regiment, Tile, GameState, UnitType, Facing, GameAnimation, AiConfig } from './game/types';
 import { getInitialState, calculateDamage, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath } from './game/engine';
 
 function cn(...inputs: ClassValue[]) {
@@ -172,6 +179,127 @@ const UnitIcon = ({ type }: { type: UnitType }) => {
   }
 };
 
+const AiConfigModal = ({ 
+  isOpen, 
+  onClose, 
+  aiConfigs, 
+  onSave 
+}: { 
+  isOpen: boolean; 
+  onClose: () => void; 
+  aiConfigs: { [key: number]: AiConfig };
+  onSave: (configs: { [key: number]: AiConfig }) => void;
+}) => {
+  const [localConfigs, setLocalConfigs] = useState(aiConfigs);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
+      <motion.div 
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        className="bg-[#E4E3E0] border-2 border-[#141414] p-8 max-w-2xl w-full shadow-2xl flex flex-col gap-6"
+      >
+        <div className="flex justify-between items-center border-b border-[#141414] pb-4">
+          <h2 className="text-2xl font-bold uppercase tracking-tight">AI General Configuration</h2>
+          <button onClick={onClose} className="hover:rotate-90 transition-transform">
+            <X size={24} />
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          {[1, 2].map(playerNum => (
+            <div key={playerNum} className="space-y-4 p-4 border border-[#141414]/20 bg-white/50">
+              <h3 className="font-bold uppercase text-sm border-b border-[#141414] pb-2">Player {playerNum}</h3>
+              
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-bold opacity-60">Gemini API Key</label>
+                <input 
+                  type="password"
+                  value={localConfigs[playerNum].apiKey}
+                  onChange={(e) => setLocalConfigs(prev => ({
+                    ...prev,
+                    [playerNum]: { ...prev[playerNum], apiKey: e.target.value }
+                  }))}
+                  placeholder="Paste your key here..."
+                  className="w-full p-2 bg-white border border-[#141414] font-mono text-xs focus:ring-1 focus:ring-[#141414] outline-none"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-bold opacity-60">Model Selection</label>
+                <select 
+                  value={localConfigs[playerNum].model}
+                  onChange={(e) => setLocalConfigs(prev => ({
+                    ...prev,
+                    [playerNum]: { ...prev[playerNum], model: e.target.value }
+                  }))}
+                  className="w-full p-2 bg-white border border-[#141414] font-mono text-xs focus:ring-1 focus:ring-[#141414] outline-none"
+                >
+                  <option value="gemini-3-flash-preview">Gemini 3 Flash (Fast)</option>
+                  <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (Advanced)</option>
+                  <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash Lite (Lite)</option>
+                </select>
+              </div>
+
+              <div className="space-y-1 pt-2 border-t border-[#141414]/10">
+                <label className="text-[10px] uppercase font-bold opacity-60">LangSmith API Key (Optional)</label>
+                <input 
+                  type="password"
+                  value={localConfigs[playerNum].langsmithApiKey || ''}
+                  onChange={(e) => setLocalConfigs(prev => ({
+                    ...prev,
+                    [playerNum]: { ...prev[playerNum], langsmithApiKey: e.target.value }
+                  }))}
+                  placeholder="ls__..."
+                  className="w-full p-2 bg-white border border-[#141414] font-mono text-xs focus:ring-1 focus:ring-[#141414] outline-none"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-bold opacity-60">LangSmith Project</label>
+                <input 
+                  type="text"
+                  value={localConfigs[playerNum].langsmithProject || ''}
+                  onChange={(e) => setLocalConfigs(prev => ({
+                    ...prev,
+                    [playerNum]: { ...prev[playerNum], langsmithProject: e.target.value }
+                  }))}
+                  className="w-full p-2 bg-white border border-[#141414] font-mono text-xs focus:ring-1 focus:ring-[#141414] outline-none"
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="text-[10px] uppercase opacity-50 font-mono leading-relaxed">
+          * Your API keys are kept in memory only and never saved to any server. 
+          Configure different models for each player to see how they compete tactically.
+        </div>
+
+        <div className="flex gap-4 mt-4">
+          <button 
+            onClick={() => {
+              onSave(localConfigs);
+              onClose();
+            }}
+            className="flex-1 bg-[#141414] text-[#E4E3E0] p-3 uppercase font-bold hover:bg-opacity-90 transition-all"
+          >
+            Deploy AI Generals
+          </button>
+          <button 
+            onClick={onClose}
+            className="px-6 border border-[#141414] uppercase font-bold hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+          >
+            Cancel
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
 export default function App() {
   const [gameState, setGameState] = useState<GameState>(getInitialState());
   const [hoveredTile, setHoveredTile] = useState<Tile | null>(null);
@@ -180,6 +308,45 @@ export default function App() {
   const [commandError, setCommandError] = useState<string | null>(null);
   const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(true);
   const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(true);
+  const [isAiThinking, setIsAiThinking] = useState(false);
+  const [aiMonologue, setAiMonologue] = useState<string | null>(null);
+  const [aiInstructions, setAiInstructions] = useState<string>('');
+  const [showAiConfig, setShowAiConfig] = useState(false);
+  const [isArchiveOpen, setIsArchiveOpen] = useState(false);
+  const aiTurnRef = useRef<{ turn: number, player: number } | null>(null);
+
+  useEffect(() => {
+    fetch('/llm_instruction.md')
+      .then(res => res.text())
+      .then(text => setAiInstructions(text))
+      .catch(err => console.error("Failed to load AI instructions", err));
+  }, []);
+
+  useEffect(() => {
+    if (gameState.gameMode === 'ai') {
+      setMapRotation(gameState.currentPlayer === 1 ? 0 : 180);
+    }
+  }, [gameState.currentPlayer, gameState.gameMode]);
+
+  const getGameStateString = useCallback((state: GameState = gameState) => {
+    let stateStr = `--- BATTLEFIELD STATUS (Turn ${state.turn}) ---\n`;
+    stateStr += `Current Player: Player ${state.currentPlayer}\n`;
+    stateStr += `Supply: P1: ${state.supply[1]}, P2: ${state.supply[2]}\n`;
+    stateStr += `Capture Point (10:10): ${state.capturePointOwner ? `Owned by P${state.capturePointOwner} (${state.capturePointTurns}/5 turns)` : 'Uncaptured'}\n\n`;
+    
+    stateStr += `--- REGIMENTS ---\n`;
+    state.regiments.forEach(r => {
+      stateStr += `ID: ${r.id} | Name: ${r.name} | Owner: P${r.owner} | Type: ${r.type} | Pos: ${r.x}:${r.y} | Facing: ${r.facing} | Men: ${r.men}/${r.maxMen} | MP: ${r.mp}/${r.maxMp} | Range: ${r.range} | Entrenched: ${r.isEntrenched} | Box: ${r.isBoxFormation} | Palisaded: ${r.isPalisaded} | Attacked: ${r.hasAttacked}\n`;
+    });
+
+    stateStr += `\n--- RECENT BATTLEFIELD LOGS ---\n`;
+    stateStr += state.battlefieldLogs.slice(0, 10).join('\n');
+
+    stateStr += `\n\n--- RECENT COMMAND HISTORY ---\n`;
+    stateStr += state.cliHistory.slice(0, 10).join('\n');
+    
+    return stateStr;
+  }, [gameState]);
 
   const addBattlefieldLog = (msg: string) => {
     setGameState(prev => ({
@@ -598,274 +765,552 @@ export default function App() {
     });
   };
 
-  const executeCommand = (cmd: string) => {
-    setCommandError(null);
+  const applyCommands = (state: GameState, cmd: string): { newState: GameState, logs: string[], cli: string[], error: string | null } => {
+    let currentState = { ...state };
+    let logsToAdd: string[] = [];
+    let cliToAdd: string[] = [];
+    let error: string | null = null;
+
+    const localAddBattlefieldLog = (msg: string) => {
+      logsToAdd = [msg, ...logsToAdd];
+    };
+
+    const localAddCliOutput = (msg: string) => {
+      cliToAdd = [msg, ...cliToAdd];
+    };
+
     const lines = cmd.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
-    if (lines.length === 0) {
-      setCommandInput('');
-      return;
-    }
+    
+    for (const line of lines) {
+      if (error) break;
+      const cleanLine = line.split('#')[0].trim();
+      if (!cleanLine) continue;
+      
+      const parts = cleanLine.toLowerCase().split(' ');
+      const action = parts[0];
 
-    setGameState(prev => {
-      let currentState = { ...prev };
-      let logsToAdd: string[] = [];
-      let cliToAdd: string[] = [];
-      let error: string | null = null;
+      localAddCliOutput(`> ${cleanLine}`);
 
-      const localAddBattlefieldLog = (msg: string) => {
-        logsToAdd = [msg, ...logsToAdd];
-      };
+      if (action === 'end') {
+        currentState = processEndTurn(currentState);
+        currentState.battlefieldLogs = [`Turn ${currentState.turn}: Player ${currentState.currentPlayer}'s turn.`, ...currentState.battlefieldLogs].slice(0, 20);
+        localAddCliOutput("Turn ended by command.");
+        break;
+      }
 
-      const localAddCliOutput = (msg: string) => {
-        cliToAdd = [msg, ...cliToAdd];
-      };
+      if (action === 'help') {
+        localAddCliOutput("Commands: ls [all|types|map|supply|info <id>|tile <x>:<y>|costs], whoami, status, mv <id> <x>:<y>, eg <id> <targetId>, ent <id>, rtr <id>, rtl <id>, rlt <id>, box <id>, pal <id>, sel <id>, spawn <type>, end, clear, help, export");
+        continue;
+      }
 
-      for (const line of lines) {
-        if (error) break;
-        const parts = line.toLowerCase().split(' ');
-        const action = parts[0];
+      if (action === 'export') {
+        exportLogs();
+        localAddCliOutput("Logs exported to file.");
+        continue;
+      }
 
-        if (action === 'end') {
-          currentState = processEndTurn(currentState);
-          currentState.battlefieldLogs = [`Turn ${currentState.turn}: Player ${currentState.currentPlayer}'s turn.`, ...currentState.battlefieldLogs].slice(0, 20);
-          localAddCliOutput("Turn ended by command.");
+      if (action === 'whoami') {
+        localAddCliOutput(`You are Player ${currentState.currentPlayer}. Supply: ${currentState.supply[currentState.currentPlayer]}`);
+        continue;
+      }
+
+      if (action === 'status') {
+        localAddCliOutput(`Turn: ${currentState.turn} | Player: ${currentState.currentPlayer} | Supply: ${currentState.supply[currentState.currentPlayer]}`);
+        if (currentState.capturePointOwner) {
+          localAddCliOutput(`Capture Point: Player ${currentState.capturePointOwner} (${currentState.capturePointTurns}/5)`);
+        } else {
+          localAddCliOutput("Capture Point: Neutral");
+        }
+        continue;
+      }
+
+      if (action === 'clear') {
+        currentState.cliHistory = [];
+        currentState.battlefieldLogs = [];
+        continue;
+      }
+
+      if (action === 'ls') {
+        const sub = parts[1];
+        if (sub === 'all') {
+          localAddCliOutput("--- All Regiments ---");
+          currentState.regiments.forEach(r => localAddCliOutput(`[${r.id}] ${r.name} (P${r.owner}) at (${r.x},${r.y})`));
+        } else if (sub === 'types') {
+          localAddCliOutput("Unit Types: line_infantry, light_infantry, cannon, hussars, chasseurs");
+        } else if (sub === 'map') {
+          localAddCliOutput("--- Strategic Map ---");
+          currentState.map.forEach(row => row.forEach(tile => {
+            if (tile.terrain === 'command_center' || tile.terrain === 'supply_node' || tile.terrain === 'capture_point') {
+              localAddCliOutput(`${tile.terrain.replace('_', ' ')} at (${tile.x},${tile.y}) Owner: P${tile.owner || 0}`);
+            }
+          }));
+        } else if (sub === 'supply') {
+          localAddCliOutput(`Supply - P1: ${currentState.supply[1]} | P2: ${currentState.supply[2]}`);
+        } else if (sub === 'info') {
+          const targetId = parts[2];
+          const target = currentState.regiments.find(r => r.id.toLowerCase() === targetId);
+          if (!target) { error = `Unit "${targetId}" not found.`; break; }
+          localAddCliOutput(`--- Unit Info: ${target.id} ---`);
+          localAddCliOutput(`${target.name} (${target.type.replace('_', ' ')})`);
+          localAddCliOutput(`Pos: (${target.x},${target.y}) | Men: ${target.men} | MP: ${target.mp}/${target.maxMp}`);
+          localAddCliOutput(`Atk: ${target.attack} | Range: ${target.range} | Facing: ${target.facing}`);
+        } else if (sub === 'tile') {
+          const coords = parts[2]?.split(':');
+          if (!coords || coords.length !== 2) { error = 'Usage: ls tile <x>:<y>'; break; }
+          const x = parseInt(coords[0]), y = parseInt(coords[1]);
+          const tile = currentState.map[y]?.[x];
+          if (!tile) { error = `Tile (${x},${y}) not found.`; break; }
+          localAddCliOutput(`--- Tile Info: (${x},${y}) ---`);
+          localAddCliOutput(`Terrain: ${tile.terrain.replace('_', ' ')}`);
+          if (tile.owner) localAddCliOutput(`Owner: P${tile.owner}`);
+        } else if (sub === 'costs') {
+          localAddCliOutput("--- Unit Costs ---");
+          Object.entries(UNIT_COSTS).forEach(([type, cost]) => localAddCliOutput(`${type.replace('_', ' ')}: ${cost} supply`));
+        } else {
+          localAddCliOutput("--- Your Regiments ---");
+          currentState.regiments.filter(r => r.owner === currentState.currentPlayer).forEach(r => localAddCliOutput(`[${r.id}] ${r.name} (${r.type.replace('_', ' ')}) at (${r.x},${r.y}) MP:${r.mp}`));
+        }
+        continue;
+      }
+
+      if (action === 'spawn') {
+        const typeInput = parts.slice(1).join('_');
+        let type = typeInput as UnitType;
+        
+        // Handle common variations
+        if (typeInput === 'line' || typeInput === 'line_infantry') type = 'line_infantry';
+        if (typeInput === 'light' || typeInput === 'light_infantry') type = 'light_infantry';
+        
+        const cost = UNIT_COSTS[type];
+        if (!cost) { error = `Invalid unit type: ${typeInput}. Use: line infantry, light infantry, hussars, chasseurs, or cannon.`; break; }
+        if (currentState.supply[currentState.currentPlayer] < cost) { error = `Insufficient supply. Need ${cost}.`; break; }
+        
+        let cc: Tile | null = null;
+        for (const row of currentState.map) for (const tile of row) if (tile.terrain === 'command_center' && tile.owner === currentState.currentPlayer) cc = tile;
+        if (!cc) { error = "No Command Center found."; break; }
+
+        const neighbors = [{x:cc.x,y:cc.y-1},{x:cc.x,y:cc.y+1},{x:cc.x-1,y:cc.y},{x:cc.x+1,y:cc.y},{x:cc.x-1,y:cc.y-1},{x:cc.x+1,y:cc.y-1},{x:cc.x-1,y:cc.y+1},{x:cc.x+1,y:cc.y+1}];
+        const emptyNeighbor = neighbors.find(n => n.x >= 0 && n.x < 20 && n.y >= 0 && n.y < 20 && !currentState.regiments.some(r => r.x === n.x && r.y === n.y) && currentState.map[n.y][n.x].terrain !== 'river' && currentState.map[n.y][n.x].terrain !== 'mountain');
+        if (!emptyNeighbor) { error = "No space around CC."; break; }
+
+        const newId = `${currentState.currentPlayer}-${type}-${Date.now()}`;
+        const index = currentState.regiments.filter(r => r.owner === currentState.currentPlayer && r.type === type).length;
+        const newUnit = createInitialRegiment(newId, type, currentState.currentPlayer, emptyNeighbor.x, emptyNeighbor.y, index);
+        newUnit.mp = 0; newUnit.hasAttacked = true;
+        currentState.regiments = [...currentState.regiments, newUnit];
+        currentState.supply = { ...currentState.supply, [currentState.currentPlayer]: currentState.supply[currentState.currentPlayer] - cost };
+        localAddBattlefieldLog(`Reinforcements arrived: ${newUnit.name} at (${emptyNeighbor.x}, ${emptyNeighbor.y}).`);
+        continue;
+      }
+
+      const unitId = parts[1];
+      const unit = currentState.regiments.find(r => r.id.toLowerCase() === unitId);
+      if (!unit) { error = `Unit "${unitId}" not found.`; break; }
+      if (unit.owner !== currentState.currentPlayer) { error = `Unit "${unitId}" belongs to P${unit.owner}.`; break; }
+
+      switch (action) {
+        case 'sel':
+          currentState.selectedUnitId = unit.id;
+          localAddCliOutput(`Selected [${unit.id}] ${unit.name}.`);
+          break;
+        case 'mv': {
+          const coords = parts[2]?.split(':');
+          if (!coords || coords.length !== 2) { error = "Invalid coords."; break; }
+          const x = parseInt(coords[0]), y = parseInt(coords[1]);
+          
+          if (unit.isPalisaded) { error = "Unit is palisaded."; break; }
+          if (unit.isBoxFormation) { error = "Unit is in box formation."; break; }
+
+          const pathResult = findPath({ x: unit.x, y: unit.y }, { x, y }, unit, currentState.regiments, currentState.map);
+          if (!pathResult) { error = "No valid path found."; break; }
+          if (unit.mp < pathResult.cost) { error = `Insufficient MP. Need ${pathResult.cost}, have ${unit.mp}.`; break; }
+
+          // Apply movement step by step to handle ZoC damage
+          let currentX = unit.x;
+          let currentY = unit.y;
+          let currentMp = unit.mp;
+          let currentMen = unit.men;
+          let currentFacing = unit.facing;
+
+          for (const step of pathResult.path) {
+            if (step.x > currentX) currentFacing = 'east';
+            else if (step.x < currentX) currentFacing = 'west';
+            else if (step.y > currentY) currentFacing = 'south';
+            else if (step.y < currentY) currentFacing = 'north';
+
+            const tile = currentState.map[step.y][step.x];
+            const cost = getTerrainMpCost(tile.terrain);
+            const zocStatus = getZoCStatus(step.x, step.y, unit, currentState.regiments);
+            
+            let stepDamage = 0;
+            if (zocStatus.takesDamage) {
+              stepDamage = Math.floor(currentMen * 0.15);
+              localAddBattlefieldLog(`[${unit.id}] took fire while bypassing enemy line at (${step.x}, ${step.y})! (-${stepDamage} men)`);
+            }
+
+            currentX = step.x;
+            currentY = step.y;
+            currentMp -= cost;
+            currentMen = Math.max(0, currentMen - stepDamage);
+
+            if (currentMen <= 0) {
+              localAddBattlefieldLog(`[${unit.id}] ${unit.name} has been routed during movement!`);
+              break;
+            }
+          }
+
+          currentState.regiments = currentState.regiments.map(r => 
+            r.id === unit.id ? { ...r, x: currentX, y: currentY, men: currentMen, mp: currentMp, isEntrenched: false, facing: currentFacing } : r
+          ).filter(r => r.men > 0);
+
+          if (currentMen > 0) {
+            const targetTile = currentState.map[currentY][currentX];
+            if (targetTile.terrain === 'command_center' && targetTile.owner !== unit.owner) {
+              currentState.winner = unit.owner;
+              localAddBattlefieldLog(`[${unit.id}] ${unit.name} has captured the enemy Command Center!`);
+            } else if (targetTile.terrain === 'supply_node' && targetTile.owner !== unit.owner) {
+              currentState.map = currentState.map.map((row, ty) => row.map((tile, tx) => {
+                if (tx === currentX && ty === currentY) return { ...tile, owner: unit.owner };
+                return tile;
+              }));
+              localAddBattlefieldLog(`[${unit.id}] ${unit.name} has captured a Supply Node!`);
+            } else if (targetTile.terrain === 'capture_point' && targetTile.owner !== unit.owner) {
+              currentState.map = currentState.map.map((row, ty) => row.map((tile, tx) => {
+                if (tx === currentX && ty === currentY) return { ...tile, owner: unit.owner };
+                return tile;
+              }));
+              currentState.capturePointOwner = unit.owner;
+              currentState.capturePointTurns = 0;
+              localAddBattlefieldLog(`[${unit.id}] ${unit.name} has captured the Strategic Point!`);
+            }
+
+            // Add movement animation
+            currentState.animations = [
+              ...currentState.animations,
+              { id: Math.random().toString(36).substr(2, 9), timestamp: Date.now(), type: 'move', fromX: unit.x, fromY: unit.y, toX: currentX, toY: currentY, unitType: unit.type }
+            ];
+
+            localAddBattlefieldLog(`[${unit.id}] ${unit.name} moved to (${currentX}, ${currentY}).`);
+            localAddCliOutput(`Moved [${unit.id}] to (${currentX},${currentY}). Cost: ${pathResult.cost} MP.`);
+          } else {
+            localAddCliOutput(`[${unit.id}] ${unit.name} was routed.`);
+          }
           break;
         }
-
-        if (action === 'help') {
-          localAddCliOutput("Commands: ls [all|types|map|supply|info <id>|tile <x>:<y>|costs], whoami, status, mv <id> <x>:<y>, eg <id> <targetId>, ent <id>, rtr <id>, rtl <id>, rlt <id>, box <id>, pal <id>, sel <id>, spawn <type>, end, clear, help");
-          continue;
-        }
-
-        if (action === 'whoami') {
-          localAddCliOutput(`You are Player ${currentState.currentPlayer}. Supply: ${currentState.supply[currentState.currentPlayer]}`);
-          continue;
-        }
-
-        if (action === 'status') {
-          localAddCliOutput(`Turn: ${currentState.turn} | Player: ${currentState.currentPlayer} | Supply: ${currentState.supply[currentState.currentPlayer]}`);
-          if (currentState.capturePointOwner) {
-            localAddCliOutput(`Capture Point: Player ${currentState.capturePointOwner} (${currentState.capturePointTurns}/5)`);
-          } else {
-            localAddCliOutput("Capture Point: Neutral");
-          }
-          continue;
-        }
-
-        if (action === 'clear') {
-          currentState.cliHistory = [];
-          currentState.battlefieldLogs = [];
-          continue;
-        }
-
-        if (action === 'ls') {
-          const sub = parts[1];
-          if (sub === 'all') {
-            localAddCliOutput("--- All Regiments ---");
-            currentState.regiments.forEach(r => localAddCliOutput(`[${r.id}] ${r.name} (P${r.owner}) at (${r.x},${r.y})`));
-          } else if (sub === 'types') {
-            localAddCliOutput("Unit Types: line_infantry, light_infantry, cannon, hussars, chasseurs");
-          } else if (sub === 'map') {
-            localAddCliOutput("--- Strategic Map ---");
-            currentState.map.forEach(row => row.forEach(tile => {
-              if (tile.terrain === 'command_center' || tile.terrain === 'supply_node' || tile.terrain === 'capture_point') {
-                localAddCliOutput(`${tile.terrain.replace('_', ' ')} at (${tile.x},${tile.y}) Owner: P${tile.owner || 0}`);
-              }
-            }));
-          } else if (sub === 'supply') {
-            localAddCliOutput(`Supply - P1: ${currentState.supply[1]} | P2: ${currentState.supply[2]}`);
-          } else if (sub === 'info') {
-            const targetId = parts[2];
-            const target = currentState.regiments.find(r => r.id.toLowerCase() === targetId);
-            if (!target) { error = `Unit "${targetId}" not found.`; break; }
-            localAddCliOutput(`--- Unit Info: ${target.id} ---`);
-            localAddCliOutput(`${target.name} (${target.type.replace('_', ' ')})`);
-            localAddCliOutput(`Pos: (${target.x},${target.y}) | Men: ${target.men} | MP: ${target.mp}/${target.maxMp}`);
-            localAddCliOutput(`Atk: ${target.attack} | Range: ${target.range} | Facing: ${target.facing}`);
-          } else if (sub === 'tile') {
-            const coords = parts[2]?.split(':');
-            if (!coords || coords.length !== 2) { error = 'Usage: ls tile <x>:<y>'; break; }
-            const x = parseInt(coords[0]), y = parseInt(coords[1]);
-            const tile = currentState.map[y]?.[x];
-            if (!tile) { error = `Tile (${x},${y}) not found.`; break; }
-            localAddCliOutput(`--- Tile Info: (${x},${y}) ---`);
-            localAddCliOutput(`Terrain: ${tile.terrain.replace('_', ' ')}`);
-            if (tile.owner) localAddCliOutput(`Owner: P${tile.owner}`);
-          } else if (sub === 'costs') {
-            localAddCliOutput("--- Unit Costs ---");
-            Object.entries(UNIT_COSTS).forEach(([type, cost]) => localAddCliOutput(`${type.replace('_', ' ')}: ${cost} supply`));
-          } else {
-            localAddCliOutput("--- Your Regiments ---");
-            currentState.regiments.filter(r => r.owner === currentState.currentPlayer).forEach(r => localAddCliOutput(`[${r.id}] ${r.name} (${r.type.replace('_', ' ')}) at (${r.x},${r.y}) MP:${r.mp}`));
-          }
-          continue;
-        }
-
-        if (action === 'spawn') {
-          const type = parts[1] as UnitType;
-          const cost = UNIT_COSTS[type];
-          if (!cost) { error = "Invalid unit type."; break; }
-          if (currentState.supply[currentState.currentPlayer] < cost) { error = `Insufficient supply. Need ${cost}.`; break; }
+        case 'eg': {
+          const targetId = parts[2];
+          const target = currentState.regiments.find(r => r.id.toLowerCase() === targetId);
+          if (!target) { error = "Target not found."; break; }
+          if (target.owner === unit.owner) { error = "Cannot attack friendly."; break; }
+          if (unit.hasAttacked) { error = "Already attacked."; break; }
+          const dist = Math.max(Math.abs(unit.x - target.x), Math.abs(unit.y - target.y));
+          if (dist > unit.range) { error = "Out of range."; break; }
+          if (!isTargetInFiringLine(unit, target.x, target.y)) { error = "Not in firing line."; break; }
           
-          let cc: Tile | null = null;
-          for (const row of currentState.map) for (const tile of row) if (tile.terrain === 'command_center' && tile.owner === currentState.currentPlayer) cc = tile;
-          if (!cc) { error = "No Command Center found."; break; }
+          // Perform attack logic manually
+          const damage = calculateDamage(unit, target, currentState.map[target.y][target.x].terrain);
+          let counterDamage = (target.range >= dist && isTargetInFiringLine(target, unit.x, unit.y)) ? calculateDamage(target, unit, currentState.map[unit.y][unit.x].terrain) : 0;
+          
+          // Skirmishers (Light Infantry/Chasseurs) harass Line Infantry without taking return fire
+          if ((unit.type === 'light_infantry' || unit.type === 'chasseurs') && target.type === 'line_infantry') {
+            counterDamage = 0;
+          }
 
-          const neighbors = [{x:cc.x,y:cc.y-1},{x:cc.x,y:cc.y+1},{x:cc.x-1,y:cc.y},{x:cc.x+1,y:cc.y},{x:cc.x-1,y:cc.y-1},{x:cc.x+1,y:cc.y-1},{x:cc.x-1,y:cc.y+1},{x:cc.x+1,y:cc.y+1}];
-          const emptyNeighbor = neighbors.find(n => n.x >= 0 && n.x < 20 && n.y >= 0 && n.y < 20 && !currentState.regiments.some(r => r.x === n.x && r.y === n.y) && currentState.map[n.y][n.x].terrain !== 'river' && currentState.map[n.y][n.x].terrain !== 'mountain');
-          if (!emptyNeighbor) { error = "No space around CC."; break; }
+          // Hussars are fast and hard to hit during a charge
+          if (unit.type === 'hussars') {
+            counterDamage = Math.floor(counterDamage * 0.4); // Take 60% less return fire when attacking
+          }
 
-          const newId = `${currentState.currentPlayer}-${type}-${Date.now()}`;
-          const index = currentState.regiments.filter(r => r.owner === currentState.currentPlayer && r.type === type).length;
-          const newUnit = createInitialRegiment(newId, type, currentState.currentPlayer, emptyNeighbor.x, emptyNeighbor.y, index);
-          newUnit.mp = 0; newUnit.hasAttacked = true;
-          currentState.regiments = [...currentState.regiments, newUnit];
-          currentState.supply = { ...currentState.supply, [currentState.currentPlayer]: currentState.supply[currentState.currentPlayer] - cost };
-          localAddBattlefieldLog(`Reinforcements arrived: ${newUnit.name} at (${emptyNeighbor.x}, ${emptyNeighbor.y}).`);
-          continue;
+          const actualDamage = Math.floor(Math.min(target.men, damage));
+          const actualCounterDamage = Math.floor(Math.min(unit.men, counterDamage));
+          
+          currentState.regiments = currentState.regiments.map(r => {
+            if (r.id === target.id) return { ...r, men: Math.max(0, r.men - actualDamage) };
+            if (r.id === unit.id) return { ...r, men: Math.max(0, r.men - actualCounterDamage), hasAttacked: true, mp: Math.max(0, r.mp - 1) };
+            return r;
+          }).filter(r => r.men > 0);
+
+          // Add animations
+          const timestamp = Date.now();
+          currentState.animations = [
+            ...currentState.animations,
+            { id: Math.random().toString(36).substr(2, 9), timestamp, type: 'attack', fromX: unit.x, fromY: unit.y, toX: target.x, toY: target.y, unitType: unit.type },
+            { id: Math.random().toString(36).substr(2, 9), timestamp, type: 'damage', fromX: target.x, fromY: target.y, damage: actualDamage }
+          ];
+          if (actualCounterDamage > 0) {
+            currentState.animations.push({ id: Math.random().toString(36).substr(2, 9), timestamp, type: 'damage', fromX: unit.x, fromY: unit.y, damage: actualCounterDamage });
+          }
+
+          localAddBattlefieldLog(`[${unit.id}] engaged [${target.id}]. Casualties: Enemy ${actualDamage}, Own ${actualCounterDamage}`);
+          localAddCliOutput(`Attacked [${target.id}] with [${unit.id}].`);
+          break;
         }
-
-        const unitId = parts[1];
-        const unit = currentState.regiments.find(r => r.id.toLowerCase() === unitId);
-        if (!unit) { error = `Unit "${unitId}" not found.`; break; }
-        if (unit.owner !== currentState.currentPlayer) { error = `Unit "${unitId}" belongs to P${unit.owner}.`; break; }
-
-        switch (action) {
-          case 'sel':
-            currentState.selectedUnitId = unit.id;
-            localAddCliOutput(`Selected [${unit.id}] ${unit.name}.`);
-            break;
-          case 'mv': {
-            const coords = parts[2]?.split(':');
-            if (!coords || coords.length !== 2) { error = "Invalid coords."; break; }
-            const x = parseInt(coords[0]), y = parseInt(coords[1]);
-            
-            if (unit.isPalisaded) { error = "Unit is palisaded."; break; }
-            if (unit.isBoxFormation) { error = "Unit is in box formation."; break; }
-
-            const pathResult = findPath({ x: unit.x, y: unit.y }, { x, y }, unit, currentState.regiments, currentState.map);
-            if (!pathResult) { error = "No valid path found."; break; }
-            if (unit.mp < pathResult.cost) { error = `Insufficient MP. Need ${pathResult.cost}, have ${unit.mp}.`; break; }
-
-            // Apply movement step by step to handle ZoC damage
-            let currentX = unit.x;
-            let currentY = unit.y;
-            let currentMp = unit.mp;
-            let currentMen = unit.men;
-            let currentFacing = unit.facing;
-
-            for (const step of pathResult.path) {
-              if (step.x > currentX) currentFacing = 'east';
-              else if (step.x < currentX) currentFacing = 'west';
-              else if (step.y > currentY) currentFacing = 'south';
-              else if (step.y < currentY) currentFacing = 'north';
-
-              const tile = currentState.map[step.y][step.x];
-              const cost = getTerrainMpCost(tile.terrain);
-              const zocStatus = getZoCStatus(step.x, step.y, unit, currentState.regiments);
-              
-              let stepDamage = 0;
-              if (zocStatus.takesDamage) {
-                stepDamage = Math.floor(currentMen * 0.15);
-                localAddBattlefieldLog(`[${unit.id}] took fire while bypassing enemy line at (${step.x}, ${step.y})! (-${stepDamage} men)`);
-              }
-
-              currentX = step.x;
-              currentY = step.y;
-              currentMp -= cost;
-              currentMen = Math.max(0, currentMen - stepDamage);
-
-              if (currentMen <= 0) {
-                localAddBattlefieldLog(`[${unit.id}] ${unit.name} has been routed during movement!`);
-                break;
-              }
-            }
-
-            currentState.regiments = currentState.regiments.map(r => 
-              r.id === unit.id ? { ...r, x: currentX, y: currentY, men: currentMen, mp: currentMp, isEntrenched: false, facing: currentFacing } : r
-            ).filter(r => r.men > 0);
-
-            if (currentMen > 0) {
-              localAddBattlefieldLog(`[${unit.id}] ${unit.name} moved to (${currentX}, ${currentY}).`);
-              localAddCliOutput(`Moved [${unit.id}] to (${currentX},${currentY}). Cost: ${pathResult.cost} MP.`);
-            } else {
-              localAddCliOutput(`[${unit.id}] ${unit.name} was routed.`);
-            }
-            break;
-          }
-          case 'eg': {
-            const targetId = parts[2];
-            const target = currentState.regiments.find(r => r.id.toLowerCase() === targetId);
-            if (!target) { error = "Target not found."; break; }
-            if (target.owner === unit.owner) { error = "Cannot attack friendly."; break; }
-            if (unit.hasAttacked) { error = "Already attacked."; break; }
-            const dist = Math.max(Math.abs(unit.x - target.x), Math.abs(unit.y - target.y));
-            if (dist > unit.range) { error = "Out of range."; break; }
-            if (!isTargetInFiringLine(unit, target.x, target.y)) { error = "Not in firing line."; break; }
-            
-            // Perform attack logic manually
-            const damage = calculateDamage(unit, target, currentState.map[target.y][target.x].terrain);
-            const counterDamage = (target.range >= dist && isTargetInFiringLine(target, unit.x, unit.y)) ? calculateDamage(target, unit, currentState.map[unit.y][unit.x].terrain) : 0;
-            const actualDamage = Math.floor(Math.min(target.men, damage));
-            const actualCounterDamage = Math.floor(Math.min(unit.men, counterDamage));
-            currentState.regiments = currentState.regiments.map(r => {
-              if (r.id === target.id) return { ...r, men: Math.max(0, r.men - actualDamage) };
-              if (r.id === unit.id) return { ...r, men: Math.max(0, r.men - actualCounterDamage), hasAttacked: true, mp: Math.max(0, r.mp - 1) };
-              return r;
-            }).filter(r => r.men > 0);
-            localAddBattlefieldLog(`[${unit.id}] engaged [${target.id}]. Casualties: Enemy ${actualDamage}, Own ${actualCounterDamage}`);
-            localAddCliOutput(`Attacked [${target.id}] with [${unit.id}].`);
-            break;
-          }
-          case 'ent':
-            if (unit.mp < 1 || unit.isEntrenched) { error = "Cannot entrench."; break; }
-            currentState.regiments = currentState.regiments.map(r => r.id === unit.id ? { ...r, isEntrenched: true, mp: 0 } : r);
-            localAddBattlefieldLog(`[${unit.id}] entrenched.`);
-            localAddCliOutput(`[${unit.id}] entrenched.`);
-            break;
-          case 'rtr':
-          case 'rtl':
-          case 'rlt': {
-            if (unit.mp < 1) { error = "Insufficient MP."; break; }
-            const directions: Facing[] = ['north', 'east', 'south', 'west'];
-            const currentIndex = directions.indexOf(unit.facing);
-            const nextIndex = (action === 'rtr') ? (currentIndex + 1) % 4 : (currentIndex + 3) % 4;
-            const newFacing = directions[nextIndex];
-            currentState.regiments = currentState.regiments.map(r => r.id === unit.id ? { ...r, facing: newFacing, mp: r.mp - 1 } : r);
-            localAddCliOutput(`[${unit.id}] rotated to face ${newFacing}.`);
-            break;
-          }
-          case 'box':
-            if (unit.type !== 'line_infantry' || unit.mp < 1) { error = "Cannot form Box."; break; }
-            currentState.regiments = currentState.regiments.map(r => r.id === unit.id ? { ...r, isBoxFormation: !r.isBoxFormation, mp: r.mp - 1 } : r);
-            localAddCliOutput(`[${unit.id}] toggled Box Formation.`);
-            break;
-          case 'pal':
-            if (unit.type !== 'cannon' || unit.mp < 1) { error = "Cannot build Palisades."; break; }
-            currentState.regiments = currentState.regiments.map(r => r.id === unit.id ? { ...r, isPalisaded: !r.isPalisaded, mp: 0 } : r);
-            localAddCliOutput(`[${unit.id}] toggled Palisades.`);
-            break;
-          default:
-            error = `Unknown command: ${action}`;
+        case 'ent':
+          if (unit.mp < 1 || unit.isEntrenched) { error = "Cannot entrench."; break; }
+          currentState.regiments = currentState.regiments.map(r => r.id === unit.id ? { ...r, isEntrenched: true, mp: 0 } : r);
+          localAddBattlefieldLog(`[${unit.id}] entrenched.`);
+          localAddCliOutput(`[${unit.id}] entrenched.`);
+          break;
+        case 'rtr':
+        case 'rtl':
+        case 'rlt': {
+          if (unit.mp < 1) { error = "Insufficient MP."; break; }
+          const directions: Facing[] = ['north', 'east', 'south', 'west'];
+          const currentIndex = directions.indexOf(unit.facing);
+          const nextIndex = (action === 'rtr') ? (currentIndex + 1) % 4 : (currentIndex + 3) % 4;
+          const newFacing = directions[nextIndex];
+          currentState.regiments = currentState.regiments.map(r => r.id === unit.id ? { ...r, facing: newFacing, mp: r.mp - 1 } : r);
+          localAddCliOutput(`[${unit.id}] rotated to face ${newFacing}.`);
+          break;
         }
+        case 'box':
+          if (unit.type !== 'line_infantry' || unit.mp < 1) { error = "Cannot form Box."; break; }
+          currentState.regiments = currentState.regiments.map(r => r.id === unit.id ? { ...r, isBoxFormation: !r.isBoxFormation, mp: r.mp - 1 } : r);
+          localAddCliOutput(`[${unit.id}] toggled Box Formation.`);
+          break;
+        case 'pal':
+          if (unit.type !== 'cannon' || unit.mp < 1) { error = "Cannot build Palisades."; break; }
+          currentState.regiments = currentState.regiments.map(r => r.id === unit.id ? { ...r, isPalisaded: !r.isPalisaded, mp: 0 } : r);
+          localAddCliOutput(`[${unit.id}] toggled Palisades.`);
+          break;
+        default:
+          error = `Unknown command: ${action}`;
       }
+    }
 
-      if (error) {
-        setCommandError(error);
-        localAddCliOutput(`Error: ${error}`);
-      }
-
-      return {
+    return {
+      newState: {
         ...currentState,
         battlefieldLogs: [...logsToAdd, ...currentState.battlefieldLogs].slice(0, 20),
         cliHistory: [...cliToAdd, ...currentState.cliHistory].slice(0, 50)
-      };
-    });
+      },
+      logs: logsToAdd,
+      cli: cliToAdd,
+      error
+    };
+  };
 
+  const executeCommand = (cmd: string) => {
+    setCommandError(null);
+    setGameState(prev => {
+      const { newState, error } = applyCommands(prev, cmd);
+      if (error) setCommandError(error);
+      return newState;
+    });
     setCommandInput('');
   };
 
+  const runAiTurn = useCallback(async () => {
+    const config = gameState.aiConfigs[gameState.currentPlayer];
+    const apiKey = config.apiKey;
+    if (!apiKey) {
+      addBattlefieldLog(`ERROR: API Key for Player ${gameState.currentPlayer} not found. Please configure AI settings.`);
+      setIsAiThinking(false);
+      return;
+    }
+
+    setIsAiThinking(true);
+    setAiMonologue(null);
+    
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+      let currentGameState = gameState;
+      let turnEnded = false;
+      let iteration = 0;
+      let turnOutput = "";
+
+      while (!turnEnded && iteration < 5) {
+        const lastMonologues = currentGameState.monologueHistory.slice(-2);
+        const monologueContext = lastMonologues.length > 0 
+          ? `\nPREVIOUS STRATEGIC CONTEXT:\n${lastMonologues.map(m => `Turn ${m.turn} (P${m.player}): ${m.text}`).join('\n')}\n`
+          : '';
+
+        const prompt = `
+${aiInstructions}
+
+${monologueContext}
+
+${turnOutput ? `\nPREVIOUS COMMANDS THIS TURN AND THEIR RESULTS:\n${turnOutput}\n` : ''}
+
+CURRENT GAME STATE:
+${getGameStateString(currentGameState)}
+
+You are Player ${currentGameState.currentPlayer}. This is iteration ${iteration + 1} of 5 for your turn.
+Analyze the situation and provide your commands.
+If you have already issued commands this turn, analyze their results and provide follow-up commands if necessary.
+IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you have no more actions to take. If this is your 5th iteration, you MUST issue 'end'.
+`;
+
+        let response;
+        
+        // Add LangSmith tracing if API key is provided
+        if (config.langsmithApiKey) {
+          const client = new Client({
+            apiKey: config.langsmithApiKey,
+          });
+
+          const runId = crypto.randomUUID();
+          await client.createRun({
+            id: runId,
+            name: `AI Turn Iteration ${iteration + 1} - Player ${currentGameState.currentPlayer}`,
+            run_type: "llm",
+            inputs: { prompt },
+            project_name: config.langsmithProject || 'regiments-simulation',
+            extra: {
+              metadata: {
+                player: currentGameState.currentPlayer,
+                turn: currentGameState.turn,
+                iteration,
+                model: config.model
+              }
+            }
+          });
+
+          try {
+            response = await ai.models.generateContent({
+              model: config.model,
+              contents: [{ role: 'user', parts: [{ text: prompt }] }]
+            });
+            
+            await client.updateRun(runId, {
+              outputs: { response: response.text },
+              end_time: Date.now()
+            });
+          } catch (e) {
+            await client.updateRun(runId, {
+              error: e instanceof Error ? e.message : String(e),
+              end_time: Date.now()
+            });
+            throw e;
+          }
+        } else {
+          response = await ai.models.generateContent({
+            model: config.model,
+            contents: [{ role: 'user', parts: [{ text: prompt }] }]
+          });
+        }
+
+        const responseText = response.text;
+        if (!responseText) {
+          throw new Error("Empty response from AI");
+        }
+
+        // Extract monologue (text before the first code block)
+        const monologue = responseText.split('```')[0].trim();
+        if (monologue) {
+          setAiMonologue(monologue);
+          setGameState(prev => ({
+            ...prev,
+            monologueHistory: [...prev.monologueHistory, {
+              turn: prev.turn,
+              player: prev.currentPlayer,
+              text: monologue,
+              timestamp: Date.now()
+            }]
+          }));
+        }
+
+        const commandMatch = responseText.match(/```(?:bash|text|cli|sh)?\s*([\s\S]*?)```/i);
+        let commands = commandMatch ? commandMatch[1].trim().split('\n') : [];
+
+        if (commands.length === 0) {
+          // Fallback: try to find lines that look like commands in the whole text
+          // This handles cases where the AI forgets triple backticks
+          const lines = responseText.split('\n');
+          const commandKeywords = ['mv', 'eg', 'ent', 'rtr', 'rtl', 'rlt', 'box', 'pal', 'sel', 'spawn', 'end', 'ls', 'whoami', 'status', 'help', 'clear'];
+          commands = lines.filter(line => {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith('#')) return false;
+            const firstWord = trimmed.toLowerCase().split(' ')[0];
+            return commandKeywords.includes(firstWord);
+          });
+        }
+
+        if (commands.length > 0) {
+          addBattlefieldLog(`AI Player ${currentGameState.currentPlayer} (${config.model}) is executing commands...`);
+          
+          let iterationLogs: string[] = [];
+          let iterationCli: string[] = [];
+          let iterationError: string | null = null;
+
+          for (const cmd of commands) {
+            const trimmedCmd = cmd.trim();
+            if (!trimmedCmd || trimmedCmd.startsWith('#')) continue;
+
+            // Execute one command
+            const { newState, logs, cli, error } = applyCommands(currentGameState, trimmedCmd);
+            
+            currentGameState = newState;
+            setGameState(newState); // Update UI immediately
+            
+            iterationLogs = [...logs, ...iterationLogs];
+            iterationCli = [...cli, ...iterationCli];
+            
+            if (error) {
+              iterationError = error;
+              break; // Stop batch on error
+            }
+
+            if (trimmedCmd.toLowerCase() === 'end') {
+              turnEnded = true;
+              break;
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 800));
+          }
+
+          // Collect output for AI's next iteration
+          turnOutput += `\n--- Iteration ${iteration + 1} Results ---\n`;
+          turnOutput += iterationCli.reverse().join('\n') + '\n' + iterationLogs.reverse().join('\n') + '\n';
+          if (iterationError) turnOutput += `ERROR: ${iterationError}\n`;
+        } else {
+          // No commands found, assume AI is done or confused
+          turnEnded = true;
+        }
+
+        iteration++;
+        if (!turnEnded && iteration < 5) {
+          addBattlefieldLog(`AI Player ${currentGameState.currentPlayer} is analyzing results...`);
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      }
+
+      // Final safety check: if the turn hasn't ended after all iterations, force an end
+      // This prevents the game from getting stuck if the AI fails to issue 'end'
+      if (currentGameState.currentPlayer === gameState.currentPlayer && !gameState.winner) {
+        addBattlefieldLog(`AI Player ${currentGameState.currentPlayer} turn timed out. Forcing end.`);
+        const { newState } = applyCommands(currentGameState, 'end');
+        setGameState(newState);
+      }
+
+      // Clear monologue after turn ends
+      setTimeout(() => setAiMonologue(null), 3000);
+    } catch (error) {
+      console.error("AI Turn Error:", error);
+      addBattlefieldLog("AI encountered an error during its turn.");
+    } finally {
+      setIsAiThinking(false);
+    }
+  }, [aiInstructions, getGameStateString, gameState, executeCommand]);
+
+  useEffect(() => {
+    if (gameState.gameMode === 'ai' && !gameState.winner && !isAiThinking) {
+      // Check if we've already started processing this turn/player
+      if (aiTurnRef.current?.turn === gameState.turn && aiTurnRef.current?.player === gameState.currentPlayer) {
+        return;
+      }
+
+      // Small delay before AI starts its turn
+      const timer = setTimeout(() => {
+        aiTurnRef.current = { turn: gameState.turn, player: gameState.currentPlayer };
+        runAiTurn();
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [gameState.gameMode, gameState.currentPlayer, gameState.winner, gameState.turn, isAiThinking, runAiTurn]);
+
   const resetGame = () => {
+    aiTurnRef.current = null;
     setGameState(getInitialState());
   };
 
@@ -875,10 +1320,60 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `napoleon_logs_turn_${gameState.turn}.txt`;
+    a.download = `regiments_logs_turn_${gameState.turn}.txt`;
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  if (gameState.gameMode === null) {
+    return (
+      <div className="fixed inset-0 bg-[#E4E3E0] flex items-center justify-center z-50 p-8">
+        <div className="max-w-2xl w-full border border-[#141414] p-12 bg-white shadow-2xl flex flex-col gap-8">
+          <div className="text-center space-y-2">
+            <h1 className="text-6xl font-serif italic tracking-tighter leading-none">REGIMENTS</h1>
+          </div>
+          
+          <div className="grid grid-cols-2 gap-6">
+            <button 
+              onClick={() => setGameState(prev => ({ ...prev, gameMode: 'manual' }))}
+              className="p-8 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex flex-col items-center gap-4 group"
+            >
+              <Users size={48} className="group-hover:scale-110 transition-transform" />
+              <div className="text-center">
+                <h2 className="text-xl font-bold uppercase">Manual Play</h2>
+                <p className="text-[10px] uppercase opacity-50 font-mono mt-1">Command your troops directly</p>
+              </div>
+            </button>
+            
+            <button 
+              onClick={() => setShowAiConfig(true)}
+              className="p-8 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex flex-col items-center gap-4 group"
+            >
+              <Terminal size={48} className="group-hover:scale-110 transition-transform" />
+              <div className="text-center">
+                <h2 className="text-xl font-bold uppercase">AI Gameplay</h2>
+                <p className="text-[10px] uppercase opacity-50 font-mono mt-1">Watch AI Generals battle</p>
+              </div>
+            </button>
+          </div>
+          
+          <AiConfigModal 
+            isOpen={showAiConfig}
+            onClose={() => setShowAiConfig(false)}
+            aiConfigs={gameState.aiConfigs}
+            onSave={(configs) => {
+              setGameState(prev => ({ ...prev, gameMode: 'ai', aiConfigs: configs }));
+              setShowAiConfig(false);
+            }}
+          />
+
+          <div className="border-t border-[#141414]/10 pt-6 text-center">
+            <p className="text-[10px] uppercase font-mono opacity-40">Bring your own API keys!</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-screen flex flex-col bg-[#E4E3E0] text-[#141414] font-sans selection:bg-[#141414] selection:text-[#E4E3E0] overflow-hidden">
@@ -889,6 +1384,16 @@ export default function App() {
           <p className="text-[10px] uppercase tracking-widest opacity-50 font-mono">19th Century Warfare Simulation</p>
         </div>
         <div className="flex gap-8 items-center">
+          {isAiThinking && (
+            <motion.div 
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              className="flex items-center gap-2 px-3 py-1 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase tracking-widest animate-pulse"
+            >
+              <Cpu size={12} className="animate-spin" /> 
+              AI Player {gameState.currentPlayer} is processing...
+            </motion.div>
+          )}
           <div className="flex gap-2 mr-4 border-r border-[#141414]/20 pr-4">
             <button 
               onClick={() => setIsLeftSidebarOpen(!isLeftSidebarOpen)}
@@ -909,6 +1414,13 @@ export default function App() {
               title="Toggle Tactical HUD"
             >
               <Terminal size={14} /> {isRightSidebarOpen ? 'Hide HUD' : 'Show HUD'}
+            </button>
+            <button 
+              onClick={() => setShowAiConfig(true)}
+              className="p-2 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors flex items-center gap-2 text-[10px] uppercase font-bold tracking-tighter"
+              title="AI Settings"
+            >
+              <Settings size={14} /> AI Settings
             </button>
           </div>
           <div className="text-right">
@@ -947,6 +1459,28 @@ export default function App() {
       </header>
 
       <main className="flex-1 flex overflow-hidden relative">
+        {/* AI Monologue Bubble */}
+        <AnimatePresence>
+          {aiMonologue && (
+            <motion.div
+              initial={{ opacity: 0, x: 20, scale: 0.9 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              exit={{ opacity: 0, x: 10, scale: 0.9 }}
+              className={cn(
+                "absolute z-[60] bottom-8 transition-all duration-300 max-w-[500px] w-full px-6 py-4 border-2 border-[#141414] shadow-2xl font-serif italic text-sm leading-relaxed bg-white",
+                isRightSidebarOpen ? "right-[280px]" : "right-8",
+                gameState.currentPlayer === 1 ? "text-blue-900 border-blue-900" : "text-red-900 border-red-900"
+              )}
+            >
+              <div className="absolute -top-2 right-8 w-4 h-4 bg-white border-l-2 border-t-2 border-inherit rotate-45" />
+              <p className="relative z-10">"{aiMonologue}"</p>
+              <div className="mt-3 flex items-center justify-end gap-2 not-italic font-sans font-bold uppercase text-[9px] opacity-40">
+                <Cpu size={10} /> AI General {gameState.currentPlayer} Strategic Insight
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Sidebar Left: Unit Info */}
         <AnimatePresence>
           {isLeftSidebarOpen && (
@@ -1328,7 +1862,17 @@ export default function App() {
             ))}
           </motion.div>
 
-          {/* Winner Overlay */}
+          <AiConfigModal 
+        isOpen={showAiConfig}
+        onClose={() => setShowAiConfig(false)}
+        aiConfigs={gameState.aiConfigs}
+        onSave={(configs) => {
+          setGameState(prev => ({ ...prev, aiConfigs: configs }));
+          setShowAiConfig(false);
+        }}
+      />
+
+      {/* Winner Overlay */}
           <AnimatePresence>
             {gameState.winner && (
               <motion.div 
@@ -1391,6 +1935,46 @@ export default function App() {
                   </div>
                 </section>
 
+                <section>
+                  <button 
+                    onClick={() => setIsArchiveOpen(!isArchiveOpen)}
+                    className="w-full flex items-center justify-between text-[11px] uppercase tracking-widest opacity-50 font-serif italic mb-4 hover:opacity-100 transition-opacity"
+                  >
+                    <span>Strategic Archive</span>
+                    {isArchiveOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                  </button>
+                  
+                  <AnimatePresence>
+                    {isArchiveOpen && (
+                      <motion.div 
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        className="overflow-hidden"
+                      >
+                        <div className="space-y-3 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
+                          {gameState.monologueHistory.length === 0 ? (
+                            <p className="text-[10px] font-mono opacity-30 italic">No strategic data recorded.</p>
+                          ) : (
+                            [...gameState.monologueHistory].reverse().map((m, i) => (
+                              <div key={i} className={cn(
+                                "p-3 border-l-2 text-[10px] leading-relaxed",
+                                m.player === 1 ? "border-blue-500 bg-blue-50/50" : "border-red-500 bg-red-50/50"
+                              )}>
+                                <div className="flex justify-between items-center mb-1 opacity-60 font-bold uppercase text-[8px]">
+                                  <span>Turn {m.turn} - Player {m.player}</span>
+                                  <span>{new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                </div>
+                                <p className="font-serif italic text-[#141414]/80">"{m.text}"</p>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </section>
+
                 <section className="mt-auto space-y-4">
                   <div className="p-4 border border-[#141414] bg-[#141414] text-[#E4E3E0] flex flex-col gap-2">
                     <div className="flex items-center gap-2 opacity-50">
@@ -1408,10 +1992,21 @@ export default function App() {
                     </div>
 
                     <div className="relative">
+                      {isAiThinking && (
+                        <div className="absolute inset-0 bg-[#141414]/80 flex items-center justify-center z-10">
+                          <div className="flex gap-1">
+                            <motion.div animate={{ opacity: [0.3, 1, 0.3] }} transition={{ repeat: Infinity, duration: 1, delay: 0 }} className="w-1 h-1 bg-white rounded-full" />
+                            <motion.div animate={{ opacity: [0.3, 1, 0.3] }} transition={{ repeat: Infinity, duration: 1, delay: 0.2 }} className="w-1 h-1 bg-white rounded-full" />
+                            <motion.div animate={{ opacity: [0.3, 1, 0.3] }} transition={{ repeat: Infinity, duration: 1, delay: 0.4 }} className="w-1 h-1 bg-white rounded-full" />
+                          </div>
+                          <span className="ml-2 text-[8px] font-mono text-white uppercase tracking-widest">AI Thinking</span>
+                        </div>
+                      )}
                       <textarea 
                         autoFocus
                         rows={3}
                         value={commandInput}
+                        disabled={isAiThinking}
                         onChange={(e) => {
                           setCommandInput(e.target.value);
                           if (commandError) setCommandError(null);

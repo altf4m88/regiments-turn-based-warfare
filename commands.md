@@ -1,4 +1,4 @@
-# Napoleon: Total Command - CLI Reference
+# Regiments - CLI Reference
 
 This document provides a comprehensive list of commands, their usage, and the rules governing the game.
 

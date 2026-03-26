@@ -44,6 +44,20 @@ export interface GameAnimation {
   timestamp: number;
 }
 
+export interface AiConfig {
+  apiKey: string;
+  model: string;
+  langsmithApiKey?: string;
+  langsmithProject?: string;
+}
+
+export interface MonologueEntry {
+  turn: number;
+  player: number;
+  text: string;
+  timestamp: number;
+}
+
 export interface GameState {
   map: Tile[][];
   regiments: Regiment[];
@@ -57,4 +71,7 @@ export interface GameState {
   capturePointTurns: number;
   battlefieldLogs: string[];
   cliHistory: string[];
+  gameMode: 'manual' | 'ai' | null;
+  aiConfigs: { [key: number]: AiConfig };
+  monologueHistory: MonologueEntry[];
 }
