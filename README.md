@@ -9,9 +9,11 @@ This game specifically made to be playable by Large-Language Model, my purpose i
 # Langsmith Trace of AI Interaction
 <img width="961" height="525" alt="Screenshot 2026-03-26 at 14 00 12" src="https://github.com/user-attachments/assets/32d2b873-1dbc-4654-926f-f351578a988f" />
 
-# AI General Monologue 
-<img width="818" height="437" alt="Screenshot 2026-03-26 at 16 12 59" src="https://github.com/user-attachments/assets/34dfef7b-f5ad-4337-ac0f-4760f36c387e" />
-<img width="780" height="422" alt="Screenshot 2026-03-26 at 16 07 01" src="https://github.com/user-attachments/assets/11df8c3d-8bb2-4fcf-958d-73eed0a56be6" />
+# AI General Monologues
+Watching the AI monologuing about art of war is quite fascinating, ...and frightening.
+<img width="1465" height="674" alt="Screenshot 2026-03-27 at 09 57 07" src="https://github.com/user-attachments/assets/260b5634-7c28-40b8-8f6f-543504731729" />
+<img width="1470" height="665" alt="Screenshot 2026-03-27 at 09 58 01" src="https://github.com/user-attachments/assets/5ac6f396-9a1e-459e-bd99-1c41d850f8b0" />
+
 
 # Setting
 ![WhatsApp Image 2026-03-26 at 16 32 59](https://github.com/user-attachments/assets/eccab639-81ac-4a99-82ae-65ca923bd6d7)
