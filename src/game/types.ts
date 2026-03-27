@@ -49,6 +49,9 @@ export interface AiConfig {
   model: string;
   langsmithApiKey?: string;
   langsmithProject?: string;
+  useVertexAI?: boolean;
+  projectId?: string;
+  location?: string;
 }
 
 export interface MonologueEntry {

@@ -227,7 +227,7 @@ export const getTerrainDefenseBonus = (terrain: Tile['terrain']): number => {
     case 'river': return -0.2;
     case 'command_center': return 0.6;
     case 'supply_node': return 0.3;
-    case 'capture_point': return 0.5;
+    case 'capture_point': return -0.3;
     default: return 0;
   }
 };

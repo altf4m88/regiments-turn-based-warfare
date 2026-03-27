@@ -20,6 +20,7 @@ import {
   RotateCw,
   MapPin,
   Square,
+  Fence,
   ArrowUp,
   Crosshair,
   Zap,
@@ -30,7 +31,6 @@ import {
   Mountain,
   Home,
   Route,
-  Fence,
   Bomb,
   CircleDot,
   Terminal,
@@ -161,6 +161,20 @@ const GameAnimations = ({ animations, mapRotation }: { animations: GameAnimation
             );
           }
 
+          if (anim.type === 'palisade') {
+            return (
+              <motion.div
+                key={anim.id}
+                initial={{ x: fromX, y: fromY, opacity: 0, scale: 0, rotate: -mapRotation }}
+                animate={{ opacity: 1, scale: 1.5, rotate: -mapRotation }}
+                exit={{ opacity: 0 }}
+                className="absolute -ml-4 -mt-4 text-amber-800"
+              >
+                <Fence size={32} />
+              </motion.div>
+            );
+          }
+
           return null;
         })}
       </AnimatePresence>
@@ -227,6 +241,51 @@ const AiConfigModal = ({
                 />
               </div>
 
+              <div className="flex items-center gap-2 pt-1">
+                <input 
+                  type="checkbox"
+                  id={`vertex-${playerNum}`}
+                  checked={localConfigs[playerNum].useVertexAI || false}
+                  onChange={(e) => setLocalConfigs(prev => ({
+                    ...prev,
+                    [playerNum]: { ...prev[playerNum], useVertexAI: e.target.checked }
+                  }))}
+                  className="accent-[#141414]"
+                />
+                <label htmlFor={`vertex-${playerNum}`} className="text-[10px] uppercase font-bold opacity-60 cursor-pointer">Use Vertex AI (Google Cloud)</label>
+              </div>
+
+              {localConfigs[playerNum].useVertexAI && (
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-60">Project ID</label>
+                    <input 
+                      type="text"
+                      value={localConfigs[playerNum].projectId || ''}
+                      onChange={(e) => setLocalConfigs(prev => ({
+                        ...prev,
+                        [playerNum]: { ...prev[playerNum], projectId: e.target.value }
+                      }))}
+                      placeholder="my-project-id"
+                      className="w-full p-2 bg-white border border-[#141414] font-mono text-[10px] focus:ring-1 focus:ring-[#141414] outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-60">Location</label>
+                    <input 
+                      type="text"
+                      value={localConfigs[playerNum].location || ''}
+                      onChange={(e) => setLocalConfigs(prev => ({
+                        ...prev,
+                        [playerNum]: { ...prev[playerNum], location: e.target.value }
+                      }))}
+                      placeholder="us-central1"
+                      className="w-full p-2 bg-white border border-[#141414] font-mono text-[10px] focus:ring-1 focus:ring-[#141414] outline-none"
+                    />
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-1">
                 <label className="text-[10px] uppercase font-bold opacity-60">Model Selection</label>
                 <select 
@@ -237,9 +296,21 @@ const AiConfigModal = ({
                   }))}
                   className="w-full p-2 bg-white border border-[#141414] font-mono text-xs focus:ring-1 focus:ring-[#141414] outline-none"
                 >
-                  <option value="gemini-3-flash-preview">Gemini 3 Flash (Fast)</option>
-                  <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (Advanced)</option>
-                  <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash Lite (Lite)</option>
+                  <optgroup label="Gemini 3 Series">
+                    <option value="gemini-3-flash-preview">Gemini 3 Flash (Fast)</option>
+                    <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (Advanced)</option>
+                    <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash Lite (Lite)</option>
+                  </optgroup>
+                  <optgroup label="Gemini 2.5 Series">
+                    <option value="gemini-2.5-flash-latest">Gemini 2.5 Flash (Latest)</option>
+                  </optgroup>
+                  <optgroup label="Gemini 2.0 Series">
+                    <option value="gemini-2.0-flash-exp">Gemini 2.0 Flash (Exp)</option>
+                  </optgroup>
+                  <optgroup label="Gemini 1.5 Series">
+                    <option value="gemini-1.5-pro-latest">Gemini 1.5 Pro (Stable)</option>
+                    <option value="gemini-1.5-flash-latest">Gemini 1.5 Flash (Stable)</option>
+                  </optgroup>
                 </select>
               </div>
 
@@ -766,7 +837,7 @@ export default function App() {
   };
 
   const applyCommands = (state: GameState, cmd: string): { newState: GameState, logs: string[], cli: string[], error: string | null } => {
-    let currentState = { ...state };
+    let currentState = { ...state, animations: [] };
     let logsToAdd: string[] = [];
     let cliToAdd: string[] = [];
     let error: string | null = null;
@@ -1045,20 +1116,47 @@ export default function App() {
           localAddCliOutput(`Attacked [${target.id}] with [${unit.id}].`);
           break;
         }
-        case 'ent':
-          if (unit.mp < 1 || unit.isEntrenched) { error = "Cannot entrench."; break; }
+        case 'ent': {
+          const tile = currentState.map[unit.y][unit.x];
+          if (unit.mp < 1 || unit.isEntrenched || tile.terrain === 'capture_point') { 
+            error = tile.terrain === 'capture_point' ? "Cannot entrench on Strategic Point." : "Cannot entrench."; 
+            break; 
+          }
           currentState.regiments = currentState.regiments.map(r => r.id === unit.id ? { ...r, isEntrenched: true, mp: 0 } : r);
+          currentState.animations = [
+            ...currentState.animations,
+            { id: Math.random().toString(36).substr(2, 9), timestamp: Date.now(), type: 'entrench', fromX: unit.x, fromY: unit.y }
+          ];
           localAddBattlefieldLog(`[${unit.id}] entrenched.`);
           localAddCliOutput(`[${unit.id}] entrenched.`);
           break;
+        }
         case 'rtr':
         case 'rtl':
-        case 'rlt': {
+        case 'rlt':
+        case 'rtn':
+        case 'rte':
+        case 'rts':
+        case 'rtw': {
           if (unit.mp < 1) { error = "Insufficient MP."; break; }
           const directions: Facing[] = ['north', 'east', 'south', 'west'];
           const currentIndex = directions.indexOf(unit.facing);
-          const nextIndex = (action === 'rtr') ? (currentIndex + 1) % 4 : (currentIndex + 3) % 4;
-          const newFacing = directions[nextIndex];
+          let newFacing: Facing;
+          
+          if (action === 'rtn') newFacing = 'north';
+          else if (action === 'rte') newFacing = 'east';
+          else if (action === 'rts') newFacing = 'south';
+          else if (action === 'rtw') newFacing = 'west';
+          else {
+            const nextIndex = (action === 'rtr') ? (currentIndex + 1) % 4 : (currentIndex + 3) % 4;
+            newFacing = directions[nextIndex];
+          }
+
+          if (newFacing === unit.facing) {
+            localAddCliOutput(`[${unit.id}] is already facing ${newFacing}.`);
+            break;
+          }
+
           currentState.regiments = currentState.regiments.map(r => r.id === unit.id ? { ...r, facing: newFacing, mp: r.mp - 1 } : r);
           localAddCliOutput(`[${unit.id}] rotated to face ${newFacing}.`);
           break;
@@ -1066,11 +1164,19 @@ export default function App() {
         case 'box':
           if (unit.type !== 'line_infantry' || unit.mp < 1) { error = "Cannot form Box."; break; }
           currentState.regiments = currentState.regiments.map(r => r.id === unit.id ? { ...r, isBoxFormation: !r.isBoxFormation, mp: r.mp - 1 } : r);
+          currentState.animations = [
+            ...currentState.animations,
+            { id: Math.random().toString(36).substr(2, 9), timestamp: Date.now(), type: 'box_formation', fromX: unit.x, fromY: unit.y }
+          ];
           localAddCliOutput(`[${unit.id}] toggled Box Formation.`);
           break;
         case 'pal':
           if (unit.type !== 'cannon' || unit.mp < 1) { error = "Cannot build Palisades."; break; }
           currentState.regiments = currentState.regiments.map(r => r.id === unit.id ? { ...r, isPalisaded: !r.isPalisaded, mp: 0 } : r);
+          currentState.animations = [
+            ...currentState.animations,
+            { id: Math.random().toString(36).substr(2, 9), timestamp: Date.now(), type: 'palisade', fromX: unit.x, fromY: unit.y }
+          ];
           localAddCliOutput(`[${unit.id}] toggled Palisades.`);
           break;
         default:
@@ -1112,12 +1218,66 @@ export default function App() {
     setIsAiThinking(true);
     setAiMonologue(null);
     
+    // LangSmith tracing setup
+    let parentRunId: string | undefined;
+    let client: Client | undefined;
+
+    // Helper for exponential backoff
+    const retryWithBackoff = async <T extends unknown>(fn: () => Promise<T>, maxRetries = 3): Promise<T> => {
+      let lastError: any;
+      for (let i = 0; i < maxRetries; i++) {
+        try {
+          return await fn();
+        } catch (error: any) {
+          lastError = error;
+          const isRateLimit = error?.message?.includes('429') || error?.status === 429 || JSON.stringify(error).includes('429');
+          if (isRateLimit && i < maxRetries - 1) {
+            const delay = Math.pow(2, i) * 2000 + Math.random() * 1000;
+            addBattlefieldLog(`AI Player ${gameState.currentPlayer} is hitting rate limits. Retrying in ${Math.round(delay/1000)}s...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue;
+          }
+          throw error;
+        }
+      }
+      throw lastError;
+    };
+
     try {
-      const ai = new GoogleGenAI({ apiKey });
+      const ai = new GoogleGenAI({ 
+        apiKey,
+        vertexai: config.useVertexAI
+      });
       let currentGameState = gameState;
       let turnEnded = false;
       let iteration = 0;
       let turnOutput = "";
+
+      // Start a chat session to maintain context across iterations
+      const chat = ai.chats.create({
+        model: config.model,
+        config: {
+          systemInstruction: aiInstructions,
+        },
+      });
+
+      if (config.langsmithApiKey) {
+        client = new Client({
+          apiKey: config.langsmithApiKey,
+        });
+        parentRunId = crypto.randomUUID();
+        await client.createRun({
+          id: parentRunId,
+          name: `AI Turn Flow - Player ${currentGameState.currentPlayer}`,
+          run_type: "chain",
+          inputs: { 
+            turn: currentGameState.turn, 
+            player: currentGameState.currentPlayer,
+            model: config.model
+          },
+          project_name: config.langsmithProject || 'regiments-simulation',
+        });
+      }
 
       while (!turnEnded && iteration < 5) {
         const lastMonologues = currentGameState.monologueHistory.slice(-2);
@@ -1126,52 +1286,33 @@ export default function App() {
           : '';
 
         const prompt = `
-${aiInstructions}
-
 ${monologueContext}
 
-${turnOutput ? `\nPREVIOUS COMMANDS THIS TURN AND THEIR RESULTS:\n${turnOutput}\n` : ''}
+${turnOutput ? `\nRESULTS OF YOUR PREVIOUS ACTIONS THIS TURN:\n${turnOutput}\n` : ''}
 
 CURRENT GAME STATE:
 ${getGameStateString(currentGameState)}
 
 You are Player ${currentGameState.currentPlayer}. This is iteration ${iteration + 1} of 5 for your turn.
 Analyze the situation and provide your commands.
-If you have already issued commands this turn, analyze their results and provide follow-up commands if necessary.
 IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you have no more actions to take. If this is your 5th iteration, you MUST issue 'end'.
 `;
 
         let response;
         
-        // Add LangSmith tracing if API key is provided
-        if (config.langsmithApiKey) {
-          const client = new Client({
-            apiKey: config.langsmithApiKey,
-          });
-
+        if (client && parentRunId) {
           const runId = crypto.randomUUID();
           await client.createRun({
             id: runId,
-            name: `AI Turn Iteration ${iteration + 1} - Player ${currentGameState.currentPlayer}`,
+            parent_run_id: parentRunId,
+            name: `Iteration ${iteration + 1}`,
             run_type: "llm",
             inputs: { prompt },
             project_name: config.langsmithProject || 'regiments-simulation',
-            extra: {
-              metadata: {
-                player: currentGameState.currentPlayer,
-                turn: currentGameState.turn,
-                iteration,
-                model: config.model
-              }
-            }
           });
 
           try {
-            response = await ai.models.generateContent({
-              model: config.model,
-              contents: [{ role: 'user', parts: [{ text: prompt }] }]
-            });
-            
+            response = await retryWithBackoff(() => chat.sendMessage({ message: prompt }));
             await client.updateRun(runId, {
               outputs: { response: response.text },
               end_time: Date.now()
@@ -1184,10 +1325,7 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
             throw e;
           }
         } else {
-          response = await ai.models.generateContent({
-            model: config.model,
-            contents: [{ role: 'user', parts: [{ text: prompt }] }]
-          });
+          response = await retryWithBackoff(() => chat.sendMessage({ message: prompt }));
         }
 
         const responseText = response.text;
@@ -1199,15 +1337,17 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
         const monologue = responseText.split('```')[0].trim();
         if (monologue) {
           setAiMonologue(monologue);
-          setGameState(prev => ({
-            ...prev,
-            monologueHistory: [...prev.monologueHistory, {
-              turn: prev.turn,
-              player: prev.currentPlayer,
-              text: monologue,
-              timestamp: Date.now()
-            }]
-          }));
+          const newMonologueEntry = {
+            turn: currentGameState.turn,
+            player: currentGameState.currentPlayer,
+            text: monologue,
+            timestamp: Date.now()
+          };
+          currentGameState = {
+            ...currentGameState,
+            monologueHistory: [...currentGameState.monologueHistory, newMonologueEntry]
+          };
+          setGameState(currentGameState);
         }
 
         const commandMatch = responseText.match(/```(?:bash|text|cli|sh)?\s*([\s\S]*?)```/i);
@@ -1217,7 +1357,7 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
           // Fallback: try to find lines that look like commands in the whole text
           // This handles cases where the AI forgets triple backticks
           const lines = responseText.split('\n');
-          const commandKeywords = ['mv', 'eg', 'ent', 'rtr', 'rtl', 'rlt', 'box', 'pal', 'sel', 'spawn', 'end', 'ls', 'whoami', 'status', 'help', 'clear'];
+          const commandKeywords = ['mv', 'eg', 'ent', 'rtr', 'rtl', 'rlt', 'rtn', 'rte', 'rts', 'rtw', 'box', 'pal', 'sel', 'spawn', 'end', 'ls', 'whoami', 'status', 'help', 'clear'];
           commands = lines.filter(line => {
             const trimmed = line.trim();
             if (!trimmed || trimmed.startsWith('#')) return false;
@@ -1231,7 +1371,6 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
           
           let iterationLogs: string[] = [];
           let iterationCli: string[] = [];
-          let iterationError: string | null = null;
 
           for (const cmd of commands) {
             const trimmedCmd = cmd.trim();
@@ -1247,8 +1386,8 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
             iterationCli = [...cli, ...iterationCli];
             
             if (error) {
-              iterationError = error;
-              break; // Stop batch on error
+              iterationCli = [`ERROR: ${error} (cmd: ${trimmedCmd})`, ...iterationCli];
+              // Continue to next command instead of breaking
             }
 
             if (trimmedCmd.toLowerCase() === 'end') {
@@ -1262,7 +1401,6 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
           // Collect output for AI's next iteration
           turnOutput += `\n--- Iteration ${iteration + 1} Results ---\n`;
           turnOutput += iterationCli.reverse().join('\n') + '\n' + iterationLogs.reverse().join('\n') + '\n';
-          if (iterationError) turnOutput += `ERROR: ${iterationError}\n`;
         } else {
           // No commands found, assume AI is done or confused
           turnEnded = true;
@@ -1271,7 +1409,8 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
         iteration++;
         if (!turnEnded && iteration < 5) {
           addBattlefieldLog(`AI Player ${currentGameState.currentPlayer} is analyzing results...`);
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          // Increased delay to stay under RPM limits
+          await new Promise(resolve => setTimeout(resolve, 3500));
         }
       }
 
@@ -1283,11 +1422,31 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
         setGameState(newState);
       }
 
+      // Update LangSmith parent run with end time
+      if (client && parentRunId) {
+        await client.updateRun(parentRunId, {
+          end_time: Date.now()
+        });
+      }
+
       // Clear monologue after turn ends
       setTimeout(() => setAiMonologue(null), 3000);
-    } catch (error) {
+    } catch (error: any) {
       console.error("AI Turn Error:", error);
-      addBattlefieldLog("AI encountered an error during its turn.");
+      const isRateLimit = error?.message?.includes('429') || error?.status === 429 || JSON.stringify(error).includes('429');
+      if (isRateLimit) {
+        addBattlefieldLog(`CRITICAL: AI Player ${gameState.currentPlayer} hit API rate limits. Please wait a minute before trying again or use a paid API key.`);
+      } else {
+        addBattlefieldLog("AI encountered an error during its turn.");
+      }
+      
+      // Update LangSmith parent run with error
+      if (client && parentRunId) {
+        await client.updateRun(parentRunId, {
+          error: error instanceof Error ? error.message : String(error),
+          end_time: Date.now()
+        }).catch(err => console.error("Failed to update LangSmith run with error:", err));
+      }
     } finally {
       setIsAiThinking(false);
     }
