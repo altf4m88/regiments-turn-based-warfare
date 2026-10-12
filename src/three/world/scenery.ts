@@ -1,12 +1,14 @@
 import * as THREE from 'three';
 import { Tile } from '../../game/types';
-import { BORDER, BRIDGE_WIDTH, MAP_N, TEAM, TILE, WATER_LEVEL, WIND, inMap, tileCenter } from '../core/constants';
+import { BORDER, BRIDGE_WIDTH, MAP_N, NATION_CSS, TILE, WATER_LEVEL, WIND, inMap, tileCenter } from '../core/constants';
+import { Nation } from '../../game/types';
+import { ARMY_COAT } from '../models/uniforms';
 import { hash2, makeRng } from '../core/noise';
 import * as P from '../models/propModels';
 import { buildGun, buildHorseBody, buildHorseLeg, buildWheel, HORSE_LEGS, HORSE_LEG_TOP, WHEEL_R, WHEEL_X } from '../models/unitModels';
 import { makeBannerTexture, makeFlagMesh } from '../models/flags';
 import { Obstacles } from './obstacles';
-import { TerrainModel } from './TerrainModel';
+import { TerrainModel, deckHeight, deckPoint } from './TerrainModel';
 
 export const swayUniforms = { uTime: { value: 0 } };
 
@@ -71,10 +73,10 @@ export class Scenery {
   private treeMat = makeSwayMaterial(0.035, 0.3, 'tree-sway');
   private grassMat = makeSwayMaterial(2.2, 0.0, 'grass-sway');
 
-  constructor(private model: TerrainModel, private obstacles: Obstacles) {
+  constructor(private model: TerrainModel, private obstacles: Obstacles, private nations: { [player: number]: Nation }) {
     this.disposables.push(this.propMat, this.treeMat, this.grassMat);
     for (const o of [0, 1, 2]) {
-      this.bannerTex[o] = makeBannerTexture(o);
+      this.bannerTex[o] = makeBannerTexture(o === 0 ? null : nations[o]);
       this.disposables.push(this.bannerTex[o]);
     }
     this.placeVegetation();
@@ -146,8 +148,9 @@ export class Scenery {
     return arr[gz * m.vn + gx];
   }
 
+  /** Dry ground with nothing built on it: not in the river and not on a bridge or its approach. */
   private dry(x: number, z: number, margin = 0.05) {
-    return this.model.height(x, z) > WATER_LEVEL + margin;
+    return this.model.height(x, z) > WATER_LEVEL + margin && !this.model.deckAt(x, z, 0.25);
   }
 
   // -- vegetation ------------------------------------------------------------
@@ -382,7 +385,8 @@ export class Scenery {
           const owner = tile.owner ?? (ty < MAP_N / 2 ? 2 : 1);
           const dir = ty < MAP_N / 2 ? -1 : 1;
           this.makeBanner(cx, cz + dir * 0.82, 2.0, owner, 0.55, tx, ty);
-          this.put('marquee', () => P.buildMarquee(owner === 1 ? '#2b4c8c' : '#a3271f'), cx - 0.66, cz + dir * 0.62, 0, 1);
+          const nation = this.nations[owner];
+          this.put(`marquee-${nation}`, () => P.buildMarquee(ARMY_COAT[nation]), cx - 0.66, cz + dir * 0.62, 0, 1);
           this.obstacles.add(cx - 0.66, cz + dir * 0.62, 0.28);
           this.put('tent', () => P.buildTent(), cx + 0.62, cz + dir * 0.68, dir > 0 ? Math.PI : 0, 1);
           this.obstacles.add(cx + 0.62, cz + dir * 0.68, 0.2);
@@ -399,7 +403,7 @@ export class Scenery {
       const dir = owner === 1 ? 1 : -1;
       const { x: cx, z: ccz } = tileCenter(10, ccY);
       const rng = makeRng(owner * 1337 + m.seed);
-      const T = TEAM[owner];
+      const nation = this.nations[owner];
       // Manor house used as headquarters, courtyard facing the battlefield.
       const mz = ccz + dir * TILE * 3.4;
       this.single(P.buildManor(), cx, m.ground(cx, mz) - 0.04, mz, dir > 0 ? Math.PI : 0);
@@ -409,8 +413,8 @@ export class Scenery {
           for (let col = 0; col < 5; col++) {
             const x = cx + side * (2.4 + col * 0.62);
             const z = ccz + dir * (1.7 + row * 0.75);
-            const stripe = col === 0 && row === 0 ? T.coat : undefined;
-            this.put(stripe ? `tent-${owner}` : 'tent', () => P.buildTent(stripe), x, z, dir > 0 ? Math.PI : 0, 1);
+            const stripe = col === 0 && row === 0 ? ARMY_COAT[nation] : undefined;
+            this.put(stripe ? `tent-${nation}` : 'tent', () => P.buildTent(stripe), x, z, dir > 0 ? Math.PI : 0, 1);
           }
         }
         // Campfires between the rows.
@@ -418,17 +422,17 @@ export class Scenery {
         for (let i = 0; i < 2; i++) this.campfires.push(new THREE.Vector3(cx + side * (2.7 + i * 1.3), m.ground(cx + side * (2.7 + i * 1.3), fz) + 0.03, fz));
       }
       // Artillery park
-      const gunGeo = this.geo(`gun-${owner}`, () => buildGun(owner));
-      const wheelGeo = this.geo(`wheel-${owner}`, () => buildWheel(owner));
+      const gunGeo = this.geo(`gun-${nation}`, () => buildGun(nation));
+      const wheelGeo = this.geo(`wheel-${nation}`, () => buildWheel(nation));
       for (let i = 0; i < 3; i++) {
         const x = cx - 6.4 - i * 0.55, z = ccz + dir * 3.2;
         const y = m.ground(x, z);
         const rot = dir > 0 ? Math.PI : 0;
-        this.put(`gun-${owner}`, () => gunGeo, x, z, rot, 1, { y });
+        this.put(`gun-${nation}`, () => gunGeo, x, z, rot, 1, { y });
         for (const s of [-1, 1]) {
           _m.makeRotationY(rot);
           _v.set(s * WHEEL_X, 0, 0).applyMatrix4(_m);
-          this.put(`wheel-${owner}`, () => wheelGeo, x + _v.x, z + _v.z, rot, 1, { y: y + WHEEL_R });
+          this.put(`wheel-${nation}`, () => wheelGeo, x + _v.x, z + _v.z, rot, 1, { y: y + WHEEL_R });
         }
       }
       // Horse lines
@@ -437,7 +441,7 @@ export class Scenery {
         const x = cx + 5.6 + i * 0.32, z = ccz + dir * 3.3;
         const y = m.ground(x, z);
         const rot = (dir > 0 ? Math.PI : 0) + (rng() - 0.5) * 0.4;
-        this.put(`horse-${owner}-${v}`, () => buildHorseBody(v, owner, 'hussar'), x, z, rot, 1, { y });
+        this.put(`horse-${nation}-${v}`, () => buildHorseBody(v, nation, 'hussar'), x, z, rot, 1, { y });
         for (const leg of HORSE_LEGS) {
           _m.makeRotationY(rot);
           _v.set(leg.x, 0, leg.z).applyMatrix4(_m);
@@ -458,9 +462,14 @@ export class Scenery {
   private placeBridges() {
     const m = this.model;
     for (const b of m.bridges) {
-      const { x, z } = tileCenter(b.tx, b.ty);
-      const geo = P.buildStoneBridge(TILE, BRIDGE_WIDTH, b.deck);
-      this.single(geo, x, 0, z, b.axis === 'x' ? 0 : Math.PI / 2);
+      const mid = (b.a0 + b.a1) / 2;
+      const geo = P.buildStoneBridge({
+        x0: b.a0 - mid, x1: b.a1 - mid, w0: b.w0 - mid, w1: b.w1 - mid,
+        width: BRIDGE_WIDTH, skew: b.skew, deck: x => deckHeight(b, mid + x),
+      });
+      // Local +X runs along the deck and local +Z across it, matching deckFrame.
+      const c = deckPoint(b, mid, 0);
+      this.single(geo, c.x, 0, c.z, Math.atan2(-b.dz, b.dx));
     }
   }
 
@@ -524,12 +533,18 @@ export class Scenery {
 
   // -- dynamic state ---------------------------------------------------------
 
-  /** Syncs banner colours and the capture-point ring with ownership in the game state. */
+  /**
+   * Syncs banner colours and the capture-point ring with ownership in the game
+   * state, and reports which strategic sites just changed hands.
+   */
   updateOwners(map: Tile[][], capturePointOwner: number | null) {
+    const changes: { terrain: Tile['terrain']; owner: number; pos: THREE.Vector3 }[] = [];
     for (const b of this.banners) {
       if (b.tx < 0) continue;
-      const owner = map[b.ty]?.[b.tx]?.owner ?? 0;
+      const tile = map[b.ty]?.[b.tx];
+      const owner = tile?.owner ?? 0;
       if (owner !== b.owner) {
+        if (tile) changes.push({ terrain: tile.terrain, owner, pos: b.pole.clone() });
         b.owner = owner;
         b.raise = 0;
         (b.mesh.material as THREE.MeshStandardMaterial).map = this.bannerTex[owner] ?? this.bannerTex[0];
@@ -538,9 +553,10 @@ export class Scenery {
     }
     if (this.captureRing) {
       const mat = this.captureRing.material as THREE.MeshBasicMaterial;
-      mat.color.set(capturePointOwner === 1 ? TEAM[1].css : capturePointOwner === 2 ? TEAM[2].css : '#ffffff');
+      mat.color.set(capturePointOwner ? NATION_CSS[this.nations[capturePointOwner]] : '#ffffff');
       this.captureRing.userData.owner = capturePointOwner;
     }
+    return changes;
   }
 
   update(dt: number, time: number) {

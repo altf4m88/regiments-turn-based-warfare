@@ -45,7 +45,12 @@ Cavalry Breaches: Enemy cavalry can pass through these gaps, but they will take 
 
 Entrenchment: Use the ent <id> command when holding a position. It consumes all remaining MP (minimum 1 required) but grants a massive static defense bonus. NOTE: You CANNOT entrench on the Strategic Point (10:10).
 
-Box Formation: If enemy cavalry (Hussars) approach within charge distance, use box <id> to form a Box Formation. You lose attack power but gain 360° firing arcs and a massive defense bonus specifically against cavalry charges.
+Box Formation: If enemy cavalry (Hussars or Chasseurs) approach within reach, use box <id> to form a Box Formation (1 MP). Exact effects:
+- Cavalry attacking the square deal only 25% damage, and take FULL return fire (charging Hussars lose their usual evasion; Chasseurs no longer avoid return fire).
+- The square fires in all directions (360°) and cannot be flanked.
+- Against infantry and cannon, the square deals only HALF damage (attacking or returning fire).
+- A square cannot move. Disband it (box <id> again, 1 MP) before marching.
+WARNING: Cannon fire deals DOUBLE damage to a unit in Box Formation. Only form a square when the cavalry threat is real, and disband it once the cavalry is gone or enemy guns have you in range.
 
 Light Infantry & Chasseurs (The Skirmishers)
 
@@ -55,13 +60,13 @@ Hussars (The Hammer)
 
 Base MP: 6.
 
-Strategy: Use roads (0.5 MP per tile) to rapidly traverse the map edges. Their goal is to hunt enemy Light Infantry and flank enemy Line Infantry. Never charge them directly into the front of an entrenched Line Infantry formation.
+Strategy: Use roads (0.5 MP per tile) to rapidly traverse the map edges. Their goal is to hunt enemy Light Infantry and flank enemy Line Infantry. Never charge them directly into the front of an entrenched Line Infantry formation, and never charge a square (Box Formation): you will do a quarter of the damage and take full return fire. Instead, keep cavalry nearby to force the enemy into squares, then hit those squares with cannon and line infantry.
 
 Flanking & Breaching: Attacking from the side/rear deals +50% damage. You can push through gaps in the enemy line, but you will take damage doing so. Ensure the target is worth the HP sacrifice before breaking through a gap.
 
 Cannons (The Artillery)
 
-Strategy: Keep them 3-5 tiles behind your main line. They do minimal damage to adjacent targets but devastate at long range.
+Strategy: Keep them 3-5 tiles behind your main line. They do minimal damage to adjacent targets but devastate at long range. Enemy Line Infantry in Box Formation take DOUBLE damage from cannon fire: when the enemy forms squares against your cavalry, turn your guns on them.
 
 Defense: If threatened but not moving, use pal <id> to construct Palisades for a heavy defense boost.
 

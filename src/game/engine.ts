@@ -1,4 +1,5 @@
-import { Regiment, UnitType, Tile, GameState, Facing } from './types';
+import { Regiment, UnitType, Tile, GameState, Facing, Nation } from './types';
+import { DEFAULT_MODELS, DEFAULT_THINKING_LEVEL } from '../ai/models';
 
 const MAP_SIZE = 20;
 
@@ -8,13 +9,28 @@ const getOrdinal = (n: number) => {
   return n + (s[(v - 20) % 10] || s[v] || s[0]);
 };
 
-const generateRegimentName = (type: UnitType, owner: number, index: number): string => {
+export const NATIONS: Record<Nation, { name: string; adjective: string }> = {
+  british: { name: 'Britain', adjective: 'British' },
+  french: { name: 'France', adjective: 'French' },
+};
+
+/** Player 1 commands the British unless they chose France on the start screen. */
+export const DEFAULT_NATIONS: { [player: number]: Nation } = { 1: 'british', 2: 'french' };
+
+export const nationsFor = (player1: Nation): { [player: number]: Nation } =>
+  ({ 1: player1, 2: player1 === 'british' ? 'french' : 'british' });
+
+export const nationOf = (state: Pick<GameState, 'nations'>, player: number): Nation =>
+  state.nations?.[player] ?? DEFAULT_NATIONS[player] ?? 'british';
+
+const generateRegimentName = (type: UnitType, nation: Nation, index: number): string => {
+  const british = nation === 'british';
   const names = {
-    line_infantry: owner === 1 ? ["Line Infantry", "Grenadiers", "Foot Guards"] : ["Garde Nationale", "Line Infantry", "Chasseurs à Pied"],
-    light_infantry: owner === 1 ? ["Light Infantry", "Rifles"] : ["Voltigeurs", "Legion"],
-    cannon: owner === 1 ? ["Royal Artillery", "Horse Artillery"] : ["Artillerie à Pied", "Artillerie de Marine"],
-    hussars: owner === 1 ? ["Royal Hussars", "Light Dragoons"] : ["Hussards", "Chasseurs"],
-    chasseurs: owner === 1 ? ["Chasseurs", "Mounted Rifles"] : ["Chasseurs à Cheval", "Dragons"]
+    line_infantry: british ? ["Line Infantry", "Grenadiers", "Foot Guards"] : ["Garde Nationale", "Line Infantry", "Chasseurs à Pied"],
+    light_infantry: british ? ["Light Infantry", "Rifles"] : ["Voltigeurs", "Legion"],
+    cannon: british ? ["Royal Artillery", "Horse Artillery"] : ["Artillerie à Pied", "Artillerie de Marine"],
+    hussars: british ? ["Royal Hussars", "Light Dragoons"] : ["Hussards", "Chasseurs"],
+    chasseurs: british ? ["Chasseurs", "Mounted Rifles"] : ["Chasseurs à Cheval", "Dragons"]
   };
 
   const typeNames = names[type];
@@ -45,7 +61,8 @@ export const createInitialRegiment = (
   x: number,
   y: number,
   index: number,
-  facing: Facing = owner === 1 ? 'north' : 'south'
+  facing: Facing = owner === 1 ? 'north' : 'south',
+  nation: Nation = DEFAULT_NATIONS[owner] ?? 'british'
 ): Regiment => {
   const stats = {
     line_infantry: { maxMen: 1000, attack: 0.18, defense: 0.12, maxMp: 3, range: 2 },
@@ -57,7 +74,7 @@ export const createInitialRegiment = (
 
   return {
     id,
-    name: generateRegimentName(type, owner, index),
+    name: generateRegimentName(type, nation, index),
     type,
     owner,
     standardColor: generateStandardColor(),
@@ -241,8 +258,10 @@ export const getTerrainMpCost = (terrain: Tile['terrain']): number => {
   }
 };
 
-export const getInitialState = (): GameState => {
+export const getInitialState = (nations: { [player: number]: Nation } = DEFAULT_NATIONS): GameState => {
   const map = generateMap();
+  const reg = (id: string, type: UnitType, owner: number, x: number, y: number, index: number) =>
+    createInitialRegiment(id, type, owner, x, y, index, undefined, nations[owner]);
   
   // Place Command Centers
   // Player 1 (Bottom)
@@ -252,34 +271,34 @@ export const getInitialState = (): GameState => {
 
   const regiments: Regiment[] = [
     // Player 2 (Top) - 6 Line, 2 Light, 2 Cannon, 2 Hussar, 1 Chasseur
-    createInitialRegiment('p2-l1', 'line_infantry', 2, 5, 2, 0),
-    createInitialRegiment('p2-l2', 'line_infantry', 2, 7, 2, 1),
-    createInitialRegiment('p2-l3', 'line_infantry', 2, 9, 2, 2),
-    createInitialRegiment('p2-l4', 'line_infantry', 2, 11, 2, 3),
-    createInitialRegiment('p2-l5', 'line_infantry', 2, 13, 2, 4),
-    createInitialRegiment('p2-l6', 'line_infantry', 2, 15, 2, 5),
-    createInitialRegiment('p2-li1', 'light_infantry', 2, 4, 3, 0),
-    createInitialRegiment('p2-li2', 'light_infantry', 2, 16, 3, 1),
-    createInitialRegiment('p2-c1', 'cannon', 2, 8, 1, 0),
-    createInitialRegiment('p2-c2', 'cannon', 2, 12, 1, 1),
-    createInitialRegiment('p2-h1', 'hussars', 2, 2, 2, 0),
-    createInitialRegiment('p2-h2', 'hussars', 2, 18, 2, 1),
-    createInitialRegiment('p2-ch1', 'chasseurs', 2, 10, 1, 0), // Moved slightly to avoid CC
+    reg('p2-l1', 'line_infantry', 2, 5, 2, 0),
+    reg('p2-l2', 'line_infantry', 2, 7, 2, 1),
+    reg('p2-l3', 'line_infantry', 2, 9, 2, 2),
+    reg('p2-l4', 'line_infantry', 2, 11, 2, 3),
+    reg('p2-l5', 'line_infantry', 2, 13, 2, 4),
+    reg('p2-l6', 'line_infantry', 2, 15, 2, 5),
+    reg('p2-li1', 'light_infantry', 2, 4, 3, 0),
+    reg('p2-li2', 'light_infantry', 2, 16, 3, 1),
+    reg('p2-c1', 'cannon', 2, 8, 1, 0),
+    reg('p2-c2', 'cannon', 2, 12, 1, 1),
+    reg('p2-h1', 'hussars', 2, 2, 2, 0),
+    reg('p2-h2', 'hussars', 2, 18, 2, 1),
+    reg('p2-ch1', 'chasseurs', 2, 10, 1, 0), // Moved slightly to avoid CC
 
     // Player 1 (Bottom) - 6 Line, 2 Light, 2 Cannon, 2 Hussar, 1 Chasseur
-    createInitialRegiment('p1-l1', 'line_infantry', 1, 5, 17, 0),
-    createInitialRegiment('p1-l2', 'line_infantry', 1, 7, 17, 1),
-    createInitialRegiment('p1-l3', 'line_infantry', 1, 9, 17, 2),
-    createInitialRegiment('p1-l4', 'line_infantry', 1, 11, 17, 3),
-    createInitialRegiment('p1-l5', 'line_infantry', 1, 13, 17, 4),
-    createInitialRegiment('p1-l6', 'line_infantry', 1, 15, 17, 5),
-    createInitialRegiment('p1-li1', 'light_infantry', 1, 4, 16, 0),
-    createInitialRegiment('p1-li2', 'light_infantry', 1, 16, 16, 1),
-    createInitialRegiment('p1-c1', 'cannon', 1, 8, 18, 0),
-    createInitialRegiment('p1-c2', 'cannon', 1, 12, 18, 1),
-    createInitialRegiment('p1-h1', 'hussars', 1, 2, 17, 0),
-    createInitialRegiment('p1-h2', 'hussars', 1, 18, 17, 1),
-    createInitialRegiment('p1-ch1', 'chasseurs', 1, 10, 18, 0), // Moved slightly to avoid CC
+    reg('p1-l1', 'line_infantry', 1, 5, 17, 0),
+    reg('p1-l2', 'line_infantry', 1, 7, 17, 1),
+    reg('p1-l3', 'line_infantry', 1, 9, 17, 2),
+    reg('p1-l4', 'line_infantry', 1, 11, 17, 3),
+    reg('p1-l5', 'line_infantry', 1, 13, 17, 4),
+    reg('p1-l6', 'line_infantry', 1, 15, 17, 5),
+    reg('p1-li1', 'light_infantry', 1, 4, 16, 0),
+    reg('p1-li2', 'light_infantry', 1, 16, 16, 1),
+    reg('p1-c1', 'cannon', 1, 8, 18, 0),
+    reg('p1-c2', 'cannon', 1, 12, 18, 1),
+    reg('p1-h1', 'hussars', 1, 2, 17, 0),
+    reg('p1-h2', 'hussars', 1, 18, 17, 1),
+    reg('p1-ch1', 'chasseurs', 1, 10, 18, 0), // Moved slightly to avoid CC
   ];
 
   return {
@@ -297,10 +316,11 @@ export const getInitialState = (): GameState => {
     cliHistory: [],
     gameMode: null,
     aiConfigs: {
-      1: { apiKey: '', model: 'gemini-3-flash-preview', langsmithApiKey: '', langsmithProject: 'regiments-p1' },
-      2: { apiKey: '', model: 'gemini-3-flash-preview', langsmithApiKey: '', langsmithProject: 'regiments-p2' }
+      1: { provider: 'gemini', apiKey: '', model: DEFAULT_MODELS.gemini, claudeApiKey: '', claudeModel: DEFAULT_MODELS.claude, thinkingLevel: DEFAULT_THINKING_LEVEL, langsmithApiKey: '', langsmithProject: 'regiments-p1' },
+      2: { provider: 'gemini', apiKey: '', model: DEFAULT_MODELS.gemini, claudeApiKey: '', claudeModel: DEFAULT_MODELS.claude, thinkingLevel: DEFAULT_THINKING_LEVEL, langsmithApiKey: '', langsmithProject: 'regiments-p2' }
     },
-    monologueHistory: []
+    monologueHistory: [],
+    nations: { ...nations }
   };
 };
 
@@ -352,12 +372,56 @@ export const calculateDamage = (attacker: Regiment, defender: Regiment, defender
     if (defender.isEntrenched) {
       bonus *= 0.5; // Cannons less effective vs entrenched
     }
+    if (defender.isBoxFormation) {
+      bonus *= 2; // A packed infantry square is a perfect artillery target
+    }
+  }
+
+  // Box formation: horses will not ride into a hedge of bayonets, but only one
+  // face of the square can fire at anything that is not cavalry.
+  const attackerIsCavalry = attacker.type === 'hussars' || attacker.type === 'chasseurs';
+  const defenderIsCavalry = defender.type === 'hussars' || defender.type === 'chasseurs';
+  if (defender.isBoxFormation && attackerIsCavalry) {
+    bonus *= 0.25;
+  }
+  if (attacker.isBoxFormation && !defenderIsCavalry) {
+    bonus *= 0.5;
   }
 
   const effectiveDefense = Math.min(baseDefense + terrainBonus + entrenchBonus + palisadeBonus, 0.95);
   const rawDamage = (attacker.men * attacker.attack * bonus) * (1 - effectiveDefense);
   const variance = 0.9 + Math.random() * 0.2;
   return Math.floor(rawDamage * variance);
+};
+
+/**
+ * Resolves one engagement: the attacker's damage and the defender's return
+ * fire, after the special rules for skirmishers, charging hussars and squares.
+ * Shared by click-to-attack and the `eg` command so they can never disagree.
+ */
+export const resolveAttack = (attacker: Regiment, defender: Regiment, map: Tile[][]) => {
+  const damage = calculateDamage(attacker, defender, map[defender.y][defender.x].terrain);
+  const dist = Math.max(Math.abs(attacker.x - defender.x), Math.abs(attacker.y - defender.y));
+  let counterDamage = (defender.range >= dist && isTargetInFiringLine(defender, attacker.x, attacker.y))
+    ? calculateDamage(defender, attacker, map[attacker.y][attacker.x].terrain)
+    : 0;
+
+  // Skirmishers (Light Infantry/Chasseurs) harass Line Infantry without taking return
+  // fire, except that a square always answers cavalry.
+  const squareVsCavalry = defender.isBoxFormation && attacker.type === 'chasseurs';
+  if ((attacker.type === 'light_infantry' || attacker.type === 'chasseurs') && defender.type === 'line_infantry' && !squareVsCavalry) {
+    counterDamage = 0;
+  }
+
+  // Hussars are fast and hard to hit during a charge, but not when riding at a square.
+  if (attacker.type === 'hussars' && !defender.isBoxFormation) {
+    counterDamage = Math.floor(counterDamage * 0.4); // Take 60% less return fire when attacking
+  }
+
+  return {
+    damage: Math.floor(Math.min(defender.men, damage)),
+    counterDamage: Math.floor(Math.min(attacker.men, counterDamage)),
+  };
 };
 
 export const isTargetInFiringLine = (attacker: Regiment, targetX: number, targetY: number): boolean => {

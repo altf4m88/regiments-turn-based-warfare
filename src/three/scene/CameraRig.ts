@@ -103,23 +103,42 @@ export class CameraRig {
   flyTo(target: THREE.Vector3, opts: { distance?: number; azimuth?: number; polar?: number; duration?: number } = {}) {
     const c = this.controls;
     const fromAz = c.getAzimuthalAngle();
-    const toAz = opts.azimuth ?? fromAz;
+    // Unspecified angles keep heading where an in-flight move was going, so a
+    // follow-cam hop doesn't cut a turn-change swing off halfway.
+    const prev = this.fly;
+    const toAz = opts.azimuth ?? (prev ? prev.toAz : fromAz);
     this.fly = {
       fromTarget: c.target.clone(),
       toTarget: target.clone(),
       fromDist: c.getDistance(),
-      toDist: opts.distance ?? c.getDistance(),
+      toDist: opts.distance ?? (prev ? prev.toDist : c.getDistance()),
       fromAz,
       toAz: fromAz + angleDelta(fromAz, toAz),
       fromPolar: c.getPolarAngle(),
-      toPolar: opts.polar ?? c.getPolarAngle(),
+      toPolar: opts.polar ?? (prev ? prev.toPolar : c.getPolarAngle()),
       t: 0,
       dur: opts.duration ?? 1.0,
     };
   }
 
+  /** Azimuth the camera is at, or heading to if a move is in flight. */
+  get targetAzimuth() {
+    return this.fly ? this.fly.toAz : this.controls.getAzimuthalAngle();
+  }
+
+  /** Orbit to an absolute azimuth around the current (or in-flight) focus. */
   rotateTo(azimuth: number) {
+    const f = this.fly;
+    if (f) {
+      if (Math.abs(angleDelta(f.toAz, azimuth)) < 1e-3) return;
+      this.flyTo(f.toTarget, { azimuth, distance: f.toDist, polar: f.toPolar, duration: Math.max(0.7, f.dur * (1 - f.t)) });
+      return;
+    }
     this.flyTo(this.controls.target, { azimuth, duration: 1.1 });
+  }
+
+  rotateBy(delta: number) {
+    this.rotateTo(this.targetAzimuth + delta);
   }
 
   addShake(amount: number) {

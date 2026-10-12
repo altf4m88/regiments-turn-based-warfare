@@ -43,13 +43,36 @@ import {
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
-import { GoogleGenAI } from "@google/genai";
 import { Client } from "langsmith";
-import { Regiment, Tile, GameState, UnitType, Facing, GameAnimation, AiConfig } from './game/types';
-import { getInitialState, calculateDamage, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath } from './game/engine';
+import { Regiment, Tile, GameState, UnitType, Facing, GameAnimation, AiConfig, AiProvider, Nation, ThinkingLevelSetting } from './game/types';
+import { getInitialState, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath, resolveAttack, NATIONS, nationOf, nationsFor } from './game/engine';
+import { AI_MODELS, AI_PROVIDERS, THINKING_LEVELS, resolveAiModel } from './ai/models';
+import { AiSession, startAiSession } from './ai/session';
 
 // The 3D battlefield (three.js) is code-split so the 2D view stays light.
 const BattlefieldView = lazy(() => import('./three/BattlefieldView'));
+
+/** Team colours follow the army: British red, French blue. Literal class names so Tailwind keeps them. */
+const SIDE_UI: Record<Nation, {
+  text: string; textSoft: string; bubble: string; chip: string; unit: string;
+  ring40: string; ring60: string; ring80: string; archive: string; pick: string;
+}> = {
+  british: {
+    text: 'text-red-700', textSoft: 'text-red-600', bubble: 'text-red-900 border-red-900', chip: 'bg-red-100',
+    unit: 'bg-red-600 border-red-900 text-white', ring40: 'border-red-500/40', ring60: 'border-red-500/60',
+    ring80: 'border-red-500/80', archive: 'border-red-500 bg-red-50/50', pick: 'border-red-700 bg-red-50 text-red-900',
+  },
+  french: {
+    text: 'text-blue-700', textSoft: 'text-blue-600', bubble: 'text-blue-900 border-blue-900', chip: 'bg-blue-100',
+    unit: 'bg-blue-600 border-blue-900 text-white', ring40: 'border-blue-500/40', ring60: 'border-blue-500/60',
+    ring80: 'border-blue-500/80', archive: 'border-blue-500 bg-blue-50/50', pick: 'border-blue-700 bg-blue-50 text-blue-900',
+  },
+};
+
+const NATION_BLURB: Record<Nation, string> = {
+  british: 'Redcoats · Rifles · Royal Artillery · Hussars',
+  french: 'Imperial blue · Voltigeurs · Hussards · Chasseurs à cheval',
+};
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -202,12 +225,14 @@ const AiConfigModal = ({
   isOpen, 
   onClose, 
   aiConfigs, 
-  onSave 
+  onSave,
+  nations
 }: { 
   isOpen: boolean; 
   onClose: () => void; 
   aiConfigs: { [key: number]: AiConfig };
   onSave: (configs: { [key: number]: AiConfig }) => void;
+  nations: { [player: number]: Nation };
 }) => {
   const [localConfigs, setLocalConfigs] = useState(aiConfigs);
 
@@ -218,7 +243,7 @@ const AiConfigModal = ({
       <motion.div 
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
-        className="bg-[#E4E3E0] border-2 border-[#141414] p-8 max-w-2xl w-full shadow-2xl flex flex-col gap-6"
+        className="bg-[#E4E3E0] border-2 border-[#141414] p-8 max-w-2xl w-full max-h-full overflow-y-auto shadow-2xl flex flex-col gap-6"
       >
         <div className="flex justify-between items-center border-b border-[#141414] pb-4">
           <h2 className="text-2xl font-bold uppercase tracking-tight">AI General Configuration</h2>
@@ -228,49 +253,68 @@ const AiConfigModal = ({
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          {[1, 2].map(playerNum => (
+          {[1, 2].map(playerNum => {
+            const config = localConfigs[playerNum];
+            const ai = resolveAiModel(config);
+            const update = (patch: Partial<AiConfig>) => setLocalConfigs(prev => ({ ...prev, [playerNum]: { ...prev[playerNum], ...patch } }));
+            return (
             <div key={playerNum} className="space-y-4 p-4 border border-[#141414]/20 bg-white/50">
-              <h3 className="font-bold uppercase text-sm border-b border-[#141414] pb-2">Player {playerNum}</h3>
+              <h3 className={cn("font-bold uppercase text-sm border-b border-[#141414] pb-2", SIDE_UI[nations[playerNum]].text)}>Player {playerNum} · {NATIONS[nations[playerNum]].adjective}</h3>
               
               <div className="space-y-1">
-                <label className="text-[10px] uppercase font-bold opacity-60">Gemini API Key</label>
+                <label className="text-[10px] uppercase font-bold opacity-60">AI Provider</label>
+                <div className="grid grid-cols-2 border border-[#141414]" role="radiogroup" aria-label={`Player ${playerNum}'s AI provider`}>
+                  {(['gemini', 'claude'] as AiProvider[]).map(p => (
+                    <button
+                      key={p}
+                      role="radio"
+                      aria-checked={ai.provider === p}
+                      onClick={() => update({ provider: p })}
+                      className={cn(
+                        "p-2 text-left transition-all",
+                        ai.provider === p ? "bg-[#141414] text-[#E4E3E0]" : "bg-white hover:bg-[#141414]/10"
+                      )}
+                    >
+                      <span className="block text-xs font-bold uppercase">{AI_PROVIDERS[p].label}</span>
+                      <span className="block text-[9px] font-mono uppercase opacity-60">{AI_PROVIDERS[p].vendor}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-bold opacity-60">{AI_PROVIDERS[ai.provider].label} API Key</label>
                 <input 
                   type="password"
-                  value={localConfigs[playerNum].apiKey}
-                  onChange={(e) => setLocalConfigs(prev => ({
-                    ...prev,
-                    [playerNum]: { ...prev[playerNum], apiKey: e.target.value }
-                  }))}
-                  placeholder="Paste your key here..."
+                  value={ai.apiKey}
+                  onChange={(e) => update(ai.provider === 'claude' ? { claudeApiKey: e.target.value } : { apiKey: e.target.value })}
+                  placeholder={AI_PROVIDERS[ai.provider].keyPlaceholder}
                   className="w-full p-2 bg-white border border-[#141414] font-mono text-xs focus:ring-1 focus:ring-[#141414] outline-none"
                 />
+                <p className="text-[9px] font-mono opacity-50">{AI_PROVIDERS[ai.provider].keyHint}</p>
               </div>
 
-              <div className="flex items-center gap-2 pt-1">
-                <input 
-                  type="checkbox"
-                  id={`vertex-${playerNum}`}
-                  checked={localConfigs[playerNum].useVertexAI || false}
-                  onChange={(e) => setLocalConfigs(prev => ({
-                    ...prev,
-                    [playerNum]: { ...prev[playerNum], useVertexAI: e.target.checked }
-                  }))}
-                  className="accent-[#141414]"
-                />
-                <label htmlFor={`vertex-${playerNum}`} className="text-[10px] uppercase font-bold opacity-60 cursor-pointer">Use Vertex AI (Google Cloud)</label>
-              </div>
+              {ai.provider === 'gemini' && (
+                <div className="flex items-center gap-2 pt-1">
+                  <input 
+                    type="checkbox"
+                    id={`vertex-${playerNum}`}
+                    checked={config.useVertexAI || false}
+                    onChange={(e) => update({ useVertexAI: e.target.checked })}
+                    className="accent-[#141414]"
+                  />
+                  <label htmlFor={`vertex-${playerNum}`} className="text-[10px] uppercase font-bold opacity-60 cursor-pointer">Use Vertex AI (Google Cloud)</label>
+                </div>
+              )}
 
-              {localConfigs[playerNum].useVertexAI && (
+              {ai.provider === 'gemini' && config.useVertexAI && (
                 <div className="grid grid-cols-2 gap-2">
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-60">Project ID</label>
                     <input 
                       type="text"
-                      value={localConfigs[playerNum].projectId || ''}
-                      onChange={(e) => setLocalConfigs(prev => ({
-                        ...prev,
-                        [playerNum]: { ...prev[playerNum], projectId: e.target.value }
-                      }))}
+                      value={config.projectId || ''}
+                      onChange={(e) => update({ projectId: e.target.value })}
                       placeholder="my-project-id"
                       className="w-full p-2 bg-white border border-[#141414] font-mono text-[10px] focus:ring-1 focus:ring-[#141414] outline-none"
                     />
@@ -279,11 +323,8 @@ const AiConfigModal = ({
                     <label className="text-[10px] uppercase font-bold opacity-60">Location</label>
                     <input 
                       type="text"
-                      value={localConfigs[playerNum].location || ''}
-                      onChange={(e) => setLocalConfigs(prev => ({
-                        ...prev,
-                        [playerNum]: { ...prev[playerNum], location: e.target.value }
-                      }))}
+                      value={config.location || ''}
+                      onChange={(e) => update({ location: e.target.value })}
                       placeholder="us-central1"
                       className="w-full p-2 bg-white border border-[#141414] font-mono text-[10px] focus:ring-1 focus:ring-[#141414] outline-none"
                     />
@@ -294,28 +335,26 @@ const AiConfigModal = ({
               <div className="space-y-1">
                 <label className="text-[10px] uppercase font-bold opacity-60">Model Selection</label>
                 <select 
-                  value={localConfigs[playerNum].model}
-                  onChange={(e) => setLocalConfigs(prev => ({
-                    ...prev,
-                    [playerNum]: { ...prev[playerNum], model: e.target.value }
-                  }))}
+                  value={ai.model}
+                  onChange={(e) => update(ai.provider === 'claude' ? { claudeModel: e.target.value } : { model: e.target.value })}
                   className="w-full p-2 bg-white border border-[#141414] font-mono text-xs focus:ring-1 focus:ring-[#141414] outline-none"
                 >
-                  <optgroup label="Gemini 3 Series">
-                    <option value="gemini-3-flash-preview">Gemini 3 Flash (Fast)</option>
-                    <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (Advanced)</option>
-                    <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash Lite (Lite)</option>
-                  </optgroup>
-                  <optgroup label="Gemini 2.5 Series">
-                    <option value="gemini-2.5-flash-latest">Gemini 2.5 Flash (Latest)</option>
-                  </optgroup>
-                  <optgroup label="Gemini 2.0 Series">
-                    <option value="gemini-2.0-flash-exp">Gemini 2.0 Flash (Exp)</option>
-                  </optgroup>
-                  <optgroup label="Gemini 1.5 Series">
-                    <option value="gemini-1.5-pro-latest">Gemini 1.5 Pro (Stable)</option>
-                    <option value="gemini-1.5-flash-latest">Gemini 1.5 Flash (Stable)</option>
-                  </optgroup>
+                  {AI_MODELS[ai.provider].map(m => (
+                    <option key={m.id} value={m.id}>{m.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-bold opacity-60">Thinking Level</label>
+                <select
+                  value={ai.thinkingLevel}
+                  onChange={(e) => update({ thinkingLevel: e.target.value as ThinkingLevelSetting })}
+                  className="w-full p-2 bg-white border border-[#141414] font-mono text-xs focus:ring-1 focus:ring-[#141414] outline-none"
+                >
+                  {THINKING_LEVELS.map(l => (
+                    <option key={l.id} value={l.id}>{l.label}: {l.hint}</option>
+                  ))}
                 </select>
               </div>
 
@@ -346,12 +385,13 @@ const AiConfigModal = ({
                 />
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
 
         <div className="text-[10px] uppercase opacity-50 font-mono leading-relaxed">
-          * Your API keys are kept in memory only and never saved to any server. 
-          Configure different models for each player to see how they compete tactically.
+          * Your API keys are kept in memory only and never saved to any server; requests go straight from this browser to Google or Anthropic.
+          Pit Gemini against Claude, or give each side a different model or thinking level, to see how they compete tactically.
         </div>
 
         <div className="flex gap-4 mt-4">
@@ -396,7 +436,15 @@ export default function App() {
       return '3d';
     }
   });
+  const [p1Nation, setP1Nation] = useState<Nation>(() => {
+    try {
+      return localStorage.getItem('regiments.p1Nation') === 'french' ? 'french' : 'british';
+    } catch {
+      return 'british';
+    }
+  });
   const aiTurnRef = useRef<{ turn: number, player: number } | null>(null);
+  const side = (player: number) => SIDE_UI[nationOf(gameState, player)];
 
   useEffect(() => {
     try {
@@ -405,6 +453,20 @@ export default function App() {
       /* storage unavailable */
     }
   }, [viewMode]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('regiments.p1Nation', p1Nation);
+    } catch {
+      /* storage unavailable */
+    }
+  }, [p1Nation]);
+
+  /** Fresh battle with the chosen armies (the map is regenerated too). */
+  const startGame = (mode: 'manual' | 'ai', aiConfigs: { [key: number]: AiConfig }) => {
+    aiTurnRef.current = null;
+    setGameState({ ...getInitialState(nationsFor(p1Nation)), gameMode: mode, aiConfigs });
+  };
 
   useEffect(() => {
     fetch('/llm_instruction.md')
@@ -421,6 +483,7 @@ export default function App() {
 
   const getGameStateString = useCallback((state: GameState = gameState) => {
     let stateStr = `--- BATTLEFIELD STATUS (Turn ${state.turn}) ---\n`;
+    stateStr += `Armies: Player 1 = ${NATIONS[nationOf(state, 1)].adjective}, Player 2 = ${NATIONS[nationOf(state, 2)].adjective}\n`;
     stateStr += `Current Player: Player ${state.currentPlayer}\n`;
     stateStr += `Supply: P1: ${state.supply[1]}, P2: ${state.supply[2]}\n`;
     stateStr += `Capture Point (10:10): ${state.capturePointOwner ? `Owned by P${state.capturePointOwner} (${state.capturePointTurns}/5 turns)` : 'Uncaptured'}\n\n`;
@@ -647,27 +710,7 @@ export default function App() {
   };
 
   const performAttack = (attacker: Regiment, defender: Regiment) => {
-    const defenderTile = gameState.map[defender.y][defender.x];
-    const attackerTile = gameState.map[attacker.y][attacker.x];
-    
-    const damage = calculateDamage(attacker, defender, defenderTile.terrain);
-    const dist = Math.max(Math.abs(attacker.x - defender.x), Math.abs(attacker.y - defender.y));
-    let counterDamage = (defender.range >= dist && isTargetInFiringLine(defender, attacker.x, attacker.y))
-      ? calculateDamage(defender, attacker, attackerTile.terrain) 
-      : 0;
-
-    // Skirmishers (Light Infantry/Chasseurs) harass Line Infantry without taking return fire
-    if ((attacker.type === 'light_infantry' || attacker.type === 'chasseurs') && defender.type === 'line_infantry') {
-      counterDamage = 0;
-    }
-
-    // Hussars are fast and hard to hit during a charge
-    if (attacker.type === 'hussars') {
-      counterDamage = Math.floor(counterDamage * 0.4); // Take 60% less return fire when attacking
-    }
-
-    const actualDamage = Math.floor(Math.min(defender.men, damage));
-    const actualCounterDamage = Math.floor(Math.min(attacker.men, counterDamage));
+    const { damage: actualDamage, counterDamage: actualCounterDamage } = resolveAttack(attacker, defender, gameState.map);
 
     setGameState(prev => {
       let newRegiments = prev.regiments.map(r => {
@@ -700,10 +743,13 @@ export default function App() {
     addBattlefieldLog(`[${attacker.id}] ${attacker.name} engaged [${defender.id}] ${defender.name}.`);
     addBattlefieldLog(`Casualties - Enemy: ${actualDamage}, Own: ${actualCounterDamage}`);
     
-    if (defender.men <= damage) {
+    if (defender.isBoxFormation && (attacker.type === 'hussars' || attacker.type === 'chasseurs')) {
+      addBattlefieldLog(`[${defender.id}] ${defender.name}'s square holds firm against the cavalry!`);
+    }
+    if (defender.men <= actualDamage) {
       addBattlefieldLog(`[${defender.id}] ${defender.name} has been routed!`);
     }
-    if (attacker.men <= counterDamage) {
+    if (attacker.men <= actualCounterDamage) {
       addBattlefieldLog(`[${attacker.id}] ${attacker.name} has been routed!`);
     }
   };
@@ -794,7 +840,7 @@ export default function App() {
 
     const newId = `${gameState.currentPlayer}-${type}-${Date.now()}`;
     const index = gameState.regiments.filter(r => r.owner === gameState.currentPlayer && r.type === type).length;
-    const newUnit = createInitialRegiment(newId, type, gameState.currentPlayer, emptyNeighbor.x, emptyNeighbor.y, index);
+    const newUnit = createInitialRegiment(newId, type, gameState.currentPlayer, emptyNeighbor.x, emptyNeighbor.y, index, undefined, nationOf(gameState, gameState.currentPlayer));
     
     // Reinforcements cannot move or attack on the turn they arrive
     newUnit.mp = 0;
@@ -918,7 +964,7 @@ export default function App() {
       }
 
       if (action === 'whoami') {
-        localAddCliOutput(`You are Player ${currentState.currentPlayer}. Supply: ${currentState.supply[currentState.currentPlayer]}`);
+        localAddCliOutput(`You are Player ${currentState.currentPlayer} (${NATIONS[nationOf(currentState, currentState.currentPlayer)].adjective}). Supply: ${currentState.supply[currentState.currentPlayer]}`);
         continue;
       }
 
@@ -1003,7 +1049,7 @@ export default function App() {
 
         const newId = `${currentState.currentPlayer}-${type}-${Date.now()}`;
         const index = currentState.regiments.filter(r => r.owner === currentState.currentPlayer && r.type === type).length;
-        const newUnit = createInitialRegiment(newId, type, currentState.currentPlayer, emptyNeighbor.x, emptyNeighbor.y, index);
+        const newUnit = createInitialRegiment(newId, type, currentState.currentPlayer, emptyNeighbor.x, emptyNeighbor.y, index, undefined, nationOf(currentState, currentState.currentPlayer));
         newUnit.mp = 0; newUnit.hasAttacked = true;
         currentState.regiments = [...currentState.regiments, newUnit];
         currentState.supply = { ...currentState.supply, [currentState.currentPlayer]: currentState.supply[currentState.currentPlayer] - cost };
@@ -1115,22 +1161,7 @@ export default function App() {
           if (dist > unit.range) { error = "Out of range."; break; }
           if (!isTargetInFiringLine(unit, target.x, target.y)) { error = "Not in firing line."; break; }
           
-          // Perform attack logic manually
-          const damage = calculateDamage(unit, target, currentState.map[target.y][target.x].terrain);
-          let counterDamage = (target.range >= dist && isTargetInFiringLine(target, unit.x, unit.y)) ? calculateDamage(target, unit, currentState.map[unit.y][unit.x].terrain) : 0;
-          
-          // Skirmishers (Light Infantry/Chasseurs) harass Line Infantry without taking return fire
-          if ((unit.type === 'light_infantry' || unit.type === 'chasseurs') && target.type === 'line_infantry') {
-            counterDamage = 0;
-          }
-
-          // Hussars are fast and hard to hit during a charge
-          if (unit.type === 'hussars') {
-            counterDamage = Math.floor(counterDamage * 0.4); // Take 60% less return fire when attacking
-          }
-
-          const actualDamage = Math.floor(Math.min(target.men, damage));
-          const actualCounterDamage = Math.floor(Math.min(unit.men, counterDamage));
+          const { damage: actualDamage, counterDamage: actualCounterDamage } = resolveAttack(unit, target, currentState.map);
           
           currentState.regiments = currentState.regiments.map(r => {
             if (r.id === target.id) return { ...r, men: Math.max(0, r.men - actualDamage) };
@@ -1150,6 +1181,9 @@ export default function App() {
           }
 
           localAddBattlefieldLog(`[${unit.id}] engaged [${target.id}]. Casualties: Enemy ${actualDamage}, Own ${actualCounterDamage}`);
+          if (target.isBoxFormation && (unit.type === 'hussars' || unit.type === 'chasseurs')) {
+            localAddBattlefieldLog(`[${target.id}]'s square holds firm against the cavalry!`);
+          }
           localAddCliOutput(`Attacked [${target.id}] with [${unit.id}].`);
           break;
         }
@@ -1245,9 +1279,9 @@ export default function App() {
 
   const runAiTurn = useCallback(async () => {
     const config = gameState.aiConfigs[gameState.currentPlayer];
-    const apiKey = config.apiKey;
+    const { provider, apiKey, model, thinkingLevel } = resolveAiModel(config);
     if (!apiKey) {
-      addBattlefieldLog(`ERROR: API Key for Player ${gameState.currentPlayer} not found. Please configure AI settings.`);
+      addBattlefieldLog(`ERROR: ${AI_PROVIDERS[provider].label} API Key for Player ${gameState.currentPlayer} not found. Please configure AI settings.`);
       setIsAiThinking(false);
       return;
     }
@@ -1258,6 +1292,8 @@ export default function App() {
     // LangSmith tracing setup
     let parentRunId: string | undefined;
     let client: Client | undefined;
+    // Kept outside the try so the error handlers can ask it whether an error was a rate limit.
+    let session: AiSession | undefined;
 
     // Helper for exponential backoff
     const retryWithBackoff = async <T extends unknown>(fn: () => Promise<T>, maxRetries = 3): Promise<T> => {
@@ -1267,8 +1303,7 @@ export default function App() {
           return await fn();
         } catch (error: any) {
           lastError = error;
-          const isRateLimit = error?.message?.includes('429') || error?.status === 429 || JSON.stringify(error).includes('429');
-          if (isRateLimit && i < maxRetries - 1) {
+          if (session?.isRateLimit(error) && i < maxRetries - 1) {
             const delay = Math.pow(2, i) * 2000 + Math.random() * 1000;
             addBattlefieldLog(`AI Player ${gameState.currentPlayer} is hitting rate limits. Retrying in ${Math.round(delay/1000)}s...`);
             await new Promise(resolve => setTimeout(resolve, delay));
@@ -1281,22 +1316,21 @@ export default function App() {
     };
 
     try {
-      const ai = new GoogleGenAI({ 
-        apiKey,
-        vertexai: config.useVertexAI
-      });
       let currentGameState = gameState;
       let turnEnded = false;
       let iteration = 0;
       let turnOutput = "";
 
       // Start a chat session to maintain context across iterations
-      const chat = ai.chats.create({
-        model: config.model,
-        config: {
-          systemInstruction: aiInstructions,
-        },
+      const chat = await startAiSession({
+        provider,
+        apiKey,
+        model,
+        thinkingLevel,
+        systemInstruction: aiInstructions,
+        useVertexAI: config.useVertexAI,
       });
+      session = chat;
 
       if (config.langsmithApiKey) {
         client = new Client({
@@ -1310,7 +1344,9 @@ export default function App() {
           inputs: { 
             turn: currentGameState.turn, 
             player: currentGameState.currentPlayer,
-            model: config.model
+            provider,
+            model,
+            thinkingLevel
           },
           project_name: config.langsmithProject || 'regiments-simulation',
         });
@@ -1349,9 +1385,9 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
           });
 
           try {
-            response = await retryWithBackoff(() => chat.sendMessage({ message: prompt }));
+            response = await retryWithBackoff(() => chat.send(prompt));
             await client.updateRun(runId, {
-              outputs: { response: response.text },
+              outputs: { response: response.text, ...(response.refusal ? { refusal: response.refusal } : {}) },
               end_time: Date.now()
             });
           } catch (e) {
@@ -1362,7 +1398,17 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
             throw e;
           }
         } else {
-          response = await retryWithBackoff(() => chat.sendMessage({ message: prompt }));
+          response = await retryWithBackoff(() => chat.send(prompt));
+        }
+
+        if (response.refusal) {
+          // The model declined to answer: end its turn rather than retrying the same request.
+          // The note goes into this turn's state, so the forced 'end' below keeps it.
+          const why = response.refusal.category ? ` (${response.refusal.category})` : '';
+          const note = `AI Player ${currentGameState.currentPlayer}'s model declined to answer${why}. Ending its turn.`;
+          currentGameState = { ...currentGameState, battlefieldLogs: [note, ...currentGameState.battlefieldLogs].slice(0, 20) };
+          setGameState(currentGameState);
+          break;
         }
 
         const responseText = response.text;
@@ -1404,7 +1450,7 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
         }
 
         if (commands.length > 0) {
-          addBattlefieldLog(`AI Player ${currentGameState.currentPlayer} (${config.model}) is executing commands...`);
+          addBattlefieldLog(`AI Player ${currentGameState.currentPlayer} (${model}, ${thinkingLevel} thinking) is executing commands...`);
           
           let iterationLogs: string[] = [];
           let iterationCli: string[] = [];
@@ -1470,8 +1516,7 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
       setTimeout(() => setAiMonologue(null), 3000);
     } catch (error: any) {
       console.error("AI Turn Error:", error);
-      const isRateLimit = error?.message?.includes('429') || error?.status === 429 || JSON.stringify(error).includes('429');
-      if (isRateLimit) {
+      if (session?.isRateLimit(error)) {
         addBattlefieldLog(`CRITICAL: AI Player ${gameState.currentPlayer} hit API rate limits. Please wait a minute before trying again or use a paid API key.`);
       } else {
         addBattlefieldLog("AI encountered an error during its turn.");
@@ -1529,9 +1574,36 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
             <h1 className="text-6xl font-serif italic tracking-tighter leading-none">REGIMENTS</h1>
           </div>
           
+          <div className="space-y-3">
+            <p className="text-[10px] uppercase tracking-widest font-mono opacity-50 text-center">Player 1 commands</p>
+            <div className="grid grid-cols-2 gap-3" role="radiogroup" aria-label="Player 1's army">
+              {(['british', 'french'] as const).map(n => (
+                <button
+                  key={n}
+                  role="radio"
+                  aria-checked={p1Nation === n}
+                  onClick={() => setP1Nation(n)}
+                  className={cn(
+                    "p-4 border-2 flex items-center gap-3 text-left transition-all",
+                    p1Nation === n ? SIDE_UI[n].pick : "border-[#141414]/15 hover:border-[#141414]/60"
+                  )}
+                >
+                  <span className={cn("w-8 h-6 shrink-0 border border-[#141414]/40", n === 'british' ? "bg-[#b02a20]" : "bg-[#23376e]")} />
+                  <span>
+                    <span className="block font-bold uppercase tracking-tight">{NATIONS[n].adjective}</span>
+                    <span className="block text-[9px] font-mono uppercase opacity-60 leading-snug">{NATION_BLURB[n]}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px] font-mono text-center opacity-50">
+              Player 2 commands the {NATIONS[p1Nation === 'british' ? 'french' : 'british'].adjective}.
+            </p>
+          </div>
+
           <div className="grid grid-cols-2 gap-6">
             <button 
-              onClick={() => setGameState(prev => ({ ...prev, gameMode: 'manual' }))}
+              onClick={() => startGame('manual', gameState.aiConfigs)}
               className="p-8 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex flex-col items-center gap-4 group"
             >
               <Users size={48} className="group-hover:scale-110 transition-transform" />
@@ -1557,8 +1629,9 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
             isOpen={showAiConfig}
             onClose={() => setShowAiConfig(false)}
             aiConfigs={gameState.aiConfigs}
+            nations={nationsFor(p1Nation)}
             onSave={(configs) => {
-              setGameState(prev => ({ ...prev, gameMode: 'ai', aiConfigs: configs }));
+              startGame('ai', configs);
               setShowAiConfig(false);
             }}
           />
@@ -1636,13 +1709,13 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
           </div>
           <div className="text-right">
             <p className="text-[10px] uppercase opacity-50 font-mono italic">Supply</p>
-            <p className="text-xl font-bold font-mono text-blue-600">{gameState.supply[gameState.currentPlayer]}</p>
+            <p className={cn("text-xl font-bold font-mono", side(gameState.currentPlayer).textSoft)}>{gameState.supply[gameState.currentPlayer]}</p>
           </div>
           <div className="text-right">
             <p className="text-[10px] uppercase opacity-50 font-mono italic">Capture Point</p>
             <p className={cn(
               "text-xl font-bold font-mono",
-              gameState.capturePointOwner === 1 ? "text-blue-700" : gameState.capturePointOwner === 2 ? "text-red-700" : "opacity-30"
+              gameState.capturePointOwner ? side(gameState.capturePointOwner).text : "opacity-30"
             )}>
               {gameState.capturePointOwner ? `${gameState.capturePointTurns}/5` : "---"}
             </p>
@@ -1652,10 +1725,10 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
             <p className="text-xl font-bold font-mono">{gameState.turn}</p>
           </div>
           <div className="text-right">
-            <p className="text-[10px] uppercase opacity-50 font-mono italic">Active Player</p>
+            <p className="text-[10px] uppercase opacity-50 font-mono italic">Active Player · {NATIONS[nationOf(gameState, gameState.currentPlayer)].adjective}</p>
             <p className={cn(
               "text-xl font-bold uppercase",
-              gameState.currentPlayer === 1 ? "text-blue-700" : "text-red-700"
+              side(gameState.currentPlayer).text
             )}>
               Player {gameState.currentPlayer}
             </p>
@@ -1680,7 +1753,7 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
               className={cn(
                 "absolute z-[60] bottom-8 transition-all duration-300 max-w-[500px] w-full px-6 py-4 border-2 border-[#141414] shadow-2xl font-serif italic text-sm leading-relaxed bg-white",
                 isRightSidebarOpen ? "right-[280px]" : "right-8",
-                gameState.currentPlayer === 1 ? "text-blue-900 border-blue-900" : "text-red-900 border-red-900"
+                side(gameState.currentPlayer).bubble
               )}
             >
               <div className="absolute -top-2 right-8 w-4 h-4 bg-white border-l-2 border-t-2 border-inherit rotate-45" />
@@ -1731,7 +1804,7 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
                             </div>
                             <span className={cn(
                               "px-2 py-0.5 text-[10px] font-bold uppercase border border-[#141414]",
-                              selectedUnit.owner === 1 ? "bg-blue-100" : "bg-red-100"
+                              side(selectedUnit.owner).chip
                             )}>
                               P{selectedUnit.owner}
                             </span>
@@ -1991,28 +2064,28 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
                       {tile.terrain === 'supply_node' && (
                         <div className={cn(
                           "absolute inset-0 flex items-center justify-center border-2 border-dotted",
-                          tile.owner === 1 ? "border-blue-500/60" : tile.owner === 2 ? "border-red-500/60" : "border-[#141414]/20"
+                          tile.owner ? side(tile.owner).ring60 : "border-[#141414]/20"
                         )}>
-                          <CircleDot size={20} className={tile.owner === 1 ? "text-blue-600" : tile.owner === 2 ? "text-red-600" : "text-[#141414]/40"} />
+                          <CircleDot size={20} className={tile.owner ? side(tile.owner).textSoft : "text-[#141414]/40"} />
                         </div>
                       )}
                       {tile.terrain === 'capture_point' && (
                         <div className={cn(
                           "absolute inset-0 flex items-center justify-center border-4 border-double",
-                          tile.owner === 1 ? "border-blue-500/80" : tile.owner === 2 ? "border-red-500/80" : "border-[#141414]/40"
+                          tile.owner ? side(tile.owner).ring80 : "border-[#141414]/40"
                         )}>
                           <Target size={28} className={cn(
                             "animate-pulse",
-                            tile.owner === 1 ? "text-blue-600" : tile.owner === 2 ? "text-red-600" : "text-[#141414]/60"
+                            tile.owner ? side(tile.owner).textSoft : "text-[#141414]/60"
                           )} />
                         </div>
                       )}
                       {tile.terrain === 'command_center' && (
                         <div className={cn(
                           "absolute inset-0 flex items-center justify-center border-2 border-dashed",
-                          tile.owner === 1 ? "border-blue-500/40" : "border-red-500/40"
+                          side(tile.owner ?? 1).ring40
                         )}>
-                          <Flag size={24} className={tile.owner === 1 ? "text-blue-600" : "text-red-600"} />
+                          <Flag size={24} className={side(tile.owner ?? 1).textSoft} />
                         </div>
                       )}
                     </div>
@@ -2023,7 +2096,7 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
                         layoutId={unit.id}
                         className={cn(
                           "absolute inset-2 flex flex-col items-center justify-center border-2 shadow-sm",
-                          unit.owner === 1 ? "bg-blue-600 border-blue-900 text-white" : "bg-red-600 border-red-900 text-white",
+                          side(unit.owner).unit,
                           isSelected && "ring-4 ring-yellow-400 ring-offset-2",
                           unit.mp === 0 && unit.hasAttacked && "grayscale opacity-80"
                         )}
@@ -2096,6 +2169,7 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
         isOpen={showAiConfig}
         onClose={() => setShowAiConfig(false)}
         aiConfigs={gameState.aiConfigs}
+        nations={gameState.nations}
         onSave={(configs) => {
           setGameState(prev => ({ ...prev, aiConfigs: configs }));
           setShowAiConfig(false);
@@ -2111,7 +2185,7 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
                 className="absolute inset-0 bg-[#141414]/90 z-50 flex flex-col items-center justify-center text-[#E4E3E0] p-12 text-center"
               >
                 <h2 className="text-6xl font-bold uppercase italic font-serif mb-4">Victory</h2>
-                <p className="text-2xl mb-8 uppercase tracking-widest">Player {gameState.winner} has conquered the field</p>
+                <p className="text-2xl mb-8 uppercase tracking-widest">Player {gameState.winner} ({NATIONS[nationOf(gameState, gameState.winner)].adjective}) has conquered the field</p>
                 <button 
                   onClick={resetGame}
                   className="px-12 py-4 border border-[#E4E3E0] hover:bg-[#E4E3E0] hover:text-[#141414] transition-all uppercase font-bold tracking-widest"
@@ -2189,7 +2263,7 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
                             [...gameState.monologueHistory].reverse().map((m, i) => (
                               <div key={i} className={cn(
                                 "p-3 border-l-2 text-[10px] leading-relaxed",
-                                m.player === 1 ? "border-blue-500 bg-blue-50/50" : "border-red-500 bg-red-50/50"
+                                side(m.player).archive
                               )}>
                                 <div className="flex justify-between items-center mb-1 opacity-60 font-bold uppercase text-[8px]">
                                   <span>Turn {m.turn} - Player {m.player}</span>

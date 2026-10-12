@@ -1,4 +1,7 @@
 export type UnitType = 'line_infantry' | 'light_infantry' | 'cannon' | 'hussars' | 'chasseurs';
+
+/** The army a player commands; decides regiment names, uniforms, colours and flags. */
+export type Nation = 'british' | 'french';
 export type Facing = 'north' | 'south' | 'east' | 'west';
 
 export interface Regiment {
@@ -44,9 +47,26 @@ export interface GameAnimation {
   timestamp: number;
 }
 
+/** Which LLM service plays a general: Google's Gemini or Anthropic's Claude. */
+export type AiProvider = 'gemini' | 'claude';
+
+/**
+ * How much the model reasons before answering. Sent as Gemini's thinking level
+ * (Gemini 3.8 Flash requires one) or as Claude's effort.
+ */
+export type ThinkingLevelSetting = 'low' | 'medium' | 'high';
+
 export interface AiConfig {
+  /** Defaults to Gemini. */
+  provider?: AiProvider;
+  /** Google AI (Gemini) API key. */
   apiKey: string;
+  /** Gemini model. */
   model: string;
+  /** Anthropic API key, from platform.claude.com. */
+  claudeApiKey?: string;
+  claudeModel?: string;
+  thinkingLevel?: ThinkingLevelSetting;
   langsmithApiKey?: string;
   langsmithProject?: string;
   useVertexAI?: boolean;
@@ -77,4 +97,5 @@ export interface GameState {
   gameMode: 'manual' | 'ai' | null;
   aiConfigs: { [key: number]: AiConfig };
   monologueHistory: MonologueEntry[];
+  nations: { [player: number]: Nation };
 }

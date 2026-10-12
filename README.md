@@ -2,13 +2,25 @@
 It's kinda mix of chess and Total War mechanics, you move your Regiments per turn, manage supply and capture points.
 This game specifically made to be playable by Large-Language Model, my purpose is to study LLM tactical awareness and how LLM compete strategically to achieve desired objectives with resource in mind.
 
+# AI Generals
+In *AI Settings*, each player's general runs on **Gemini** (Google) or **Claude** (Anthropic), so you can pit one against the other:
+
+| Provider | Models | Key |
+| :--- | :--- | :--- |
+| Gemini | Gemini 3.8 Flash (`gemini-3.8-flash`) | [Google AI Studio](https://aistudio.google.com), or Vertex AI |
+| Claude | Claude Sonnet 5.5 (`claude-sonnet-5-5`, default), Claude Opus 5.5 (strongest), Claude Haiku 5.5 (fastest and cheapest) | [Claude Platform](https://platform.claude.com) |
+
+Each player also picks a thinking level: Low, Medium (the default) or High. It is sent as Gemini's thinking level, which Gemini 3.8 Flash requires, or as Claude's effort. Higher levels plan more carefully, but turns take longer and cost more.
+
+Requests go straight from the browser to Google or Anthropic, using the player's own key. Because the key sits in the browser, use a dedicated key with a spending limit. On Claude, the game caches the instructions and the turn so far between a turn's requests. If Claude Sonnet 5.5 or Opus 5.5 declines a request, Anthropic's server-side fallback tries another model in the same call. A general whose request is still declined ends its turn, and the battle log says why.
+
 
 # 3D Battlefield
 The battle now plays out on a fully 3D field (toggle **3D / 2D** in the header; 3D is the default). It is a view over the exact same engine: rules, the CLI and the AI generals are unchanged, and everything is generated procedurally in code with no model, texture or audio files.
 
 **The map.** The 20×20 tile map becomes a continuous landscape with rolling hills, wooded copses, villages with churches and garden walls, a river that winds across the field (stone bridges wherever the road crosses it), and dirt roads lined with poplars beyond the battlefield. Each army's headquarters (a manor, tents, an artillery park and horse lines) sits behind its command centre. Supply depots have wagons and crates and fly their owner's banner. At the capture point, one brazier is lit for every turn it has been held.
 
-**The regiments.** Napoleonic miniatures, about half a unit tall:
+**The regiments.** Napoleonic miniatures, about half a unit tall, in period uniforms. On the start screen Player 1 chooses to command the British or the French, and Player 2 takes the other army. British regiments wear red coats, with rifle-green Rifles and blue Royal Artillery and hussars. French regiments wear imperial blue, with chamois-collared voltigeurs and green hussars and chasseurs à cheval. Team colours across the 2D and 3D views follow the army: British red, French blue.
 - Line infantry stand in three ranks with their colours (painted with each regiment's own `standardColor`), an officer and a drummer.
 - Light infantry deploy in a loose skirmish chain.
 - Gunners crew their field pieces.
@@ -24,9 +36,15 @@ The number of figures tracks each regiment's strength.
 - Men fall when the shot lands and stay on the field. Regiments that are wiped out drop their colours with a "ROUTED" marker.
 - Entrenching throws up earthworks, cannon erect palisades, units wade through fords, and reinforcements march out of the command centre.
 - Flags, trees and grass move in the wind, and the water flows.
-- Sound (volleys, cannon, hooves, sabres, drums, a bugle) is synthesised with WebAudio.
+- Sound is synthesised with WebAudio, with a field reverb, and distant fire is muffled by distance. It covers:
+  - gritty, crackling musket volleys and ragged skirmish fire
+  - cannon, and round shot landing
+  - boots marching behind the drum, and the Rifles' bugle-horn
+  - galloping squadrons and gun teams rumbling into place
+  - sabres whistling and clashing in a charge
+  - bugle calls when the capture point or a depot changes hands, a flare-up as each capture-point brazier is lit, and a victory fanfare
 
-**Playing in 3D.** Hovering a tile shows its terrain, MP cost and defence, plus a march path or an "engage" hint. The selected regiment's march range, dangerous gaps in the enemy line, firing arc and attackable targets are painted on the ground. Clicking a distant reachable tile marches there using the same `mv` command the CLI and the AI use. The **Follow** camera (on by default in AI mode) flies to the action, and a minimap shows where you are looking.
+**Playing in 3D.** Hovering a tile shows its terrain, MP cost and defence, plus a march path or an "engage" hint. The selected regiment's march range, dangerous gaps in the enemy line, firing arc and attackable targets are painted on the ground. Clicking a distant reachable tile marches there using the same `mv` command the CLI and the AI use. At every turn change the camera swings round behind the army whose turn it is. The **Follow** camera (on by default in AI mode) flies to the action, and a minimap shows where you are looking.
 
 | Input | Action |
 | :--- | :--- |
@@ -41,6 +59,55 @@ The 3D code lives in `src/three/`, and three.js is code-split so the 2D view sta
 - `models/`: procedural soldiers, horses, guns, flags and buildings.
 - `units/`: formations and per-figure animation.
 - `scene/`: the renderer, camera, effects, audio and overlays.
+
+# Deploy to Google Cloud (Cloud Run)
+Regiments is a static single-page app, so it deploys as a small nginx container on [Cloud Run](https://cloud.google.com/run). Cloud Run scales to zero, so you only pay while someone is playing. The repo includes:
+- `Dockerfile`: builds the app with Node 22, then serves `dist/` with unprivileged nginx on Cloud Run's `$PORT`.
+- `deploy/nginx.conf.template`: SPA fallback, gzip, long-lived caching for fingerprinted `/assets`, and no caching for `index.html`.
+- `cloudbuild.yaml`: build → push to Artifact Registry → deploy to Cloud Run, for continuous deployment.
+
+**API keys stay in the browser.** Players type their Gemini, Claude and LangSmith keys into *AI Settings*, and the deployed site never sees them. Don't put keys in a `.env` for the build: Vite inlines `define`d variables into the public JavaScript. `.dockerignore` keeps `.env*` files out of the image anyway.
+
+### One-time setup
+```bash
+gcloud auth login
+gcloud config set project YOUR_PROJECT_ID
+gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com
+```
+
+### Option A: deploy from your machine (one command)
+```bash
+gcloud run deploy regiments --source . --region us-central1 --allow-unauthenticated
+```
+Cloud Build builds the `Dockerfile` remotely, so you don't need Docker installed. The command prints the service URL when it finishes. Run it again to ship a new version.
+
+### Option B: deploy automatically on every push to `main`
+1. Create the image repository once:
+   ```bash
+   gcloud artifacts repositories create regiments --repository-format=docker --location=us-central1
+   ```
+2. Let Cloud Build deploy to Cloud Run. New projects build as the Compute Engine default service account; older projects use `PROJECT_NUMBER@cloudbuild.gserviceaccount.com` instead.
+   ```bash
+   PROJECT_ID=$(gcloud config get-value project)
+   SA="$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')-compute@developer.gserviceaccount.com"
+   for role in roles/run.admin roles/iam.serviceAccountUser roles/artifactregistry.writer; do
+     gcloud projects add-iam-policy-binding $PROJECT_ID --member="serviceAccount:$SA" --role=$role
+   done
+   ```
+3. In the console, open **Cloud Build → Triggers → Create trigger**:
+   - Connect this GitHub repository.
+   - Event: *Push to a branch*, branch `^main$`.
+   - Configuration: *Cloud Build configuration file* `cloudbuild.yaml`.
+
+You can also run the pipeline by hand with `gcloud builds submit --config cloudbuild.yaml`. To change the region, service name or repository name, pass `--substitutions=_REGION=europe-west1,_SERVICE=regiments,_REPOSITORY=regiments`.
+
+### Test the container locally
+```bash
+docker build -t regiments .
+docker run --rm -p 8080:8080 regiments   # open http://localhost:8080
+```
+
+> If `--allow-unauthenticated` fails with a policy error, your organisation restricts public services (Domain Restricted Sharing). Ask an org admin for an exception, or keep the service private and put it behind IAP.
 
 # Starting Point
 <img width="1470" height="677" alt="Screenshot 2026-03-26 at 10 48 48" src="https://github.com/user-attachments/assets/281a4ac0-ea71-4b05-8af7-d1a1dcf43990" />

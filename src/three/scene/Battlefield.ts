@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { GameState } from '../../game/types';
+import { nationOf } from '../../game/engine';
 import { MAP_N, TILE, inMap, tileCenter } from '../core/constants';
 import { flagUniforms } from '../models/flags';
 import { ActionEvent, UnitManager } from '../units/UnitManager';
@@ -34,7 +35,8 @@ export interface BattlefieldCallbacks {
   onReady?: () => void;
 }
 
-const signature = (state: GameState) => state.map.map(r => r.map(t => t.terrain.slice(0, 3)).join('')).join('/');
+const signature = (state: GameState) =>
+  `${nationOf(state, 1)}:${nationOf(state, 2)}|` + state.map.map(r => r.map(t => t.terrain.slice(0, 3)).join('')).join('/');
 
 /**
  * Owns the WebGL renderer and the whole 3D battlefield. React feeds it game
@@ -119,16 +121,41 @@ export class Battlefield {
   update(state: GameState) {
     const sig = signature(state);
     const reset = this.state && state.turn < this.state.turn;
-    if (sig !== this.sig || reset) {
+    const rebuilt = sig !== this.sig || !!reset;
+    if (rebuilt) {
       this.sig = sig;
       this.buildWorld(state);
       this.focusOnPlayer(state.currentPlayer, false);
+    } else if (this.state && state.currentPlayer !== this.state.currentPlayer && !state.winner) {
+      this.turnCamera(state);
     }
+    const prev = rebuilt ? null : this.state;
     this.state = state;
     this.units!.sync(state);
     this.units!.applySelection(state, this.hover);
-    this.scenery!.updateOwners(state.map, state.capturePointOwner);
+    const changes = this.scenery!.updateOwners(state.map, state.capturePointOwner);
+    if (prev) this.playCues(prev, state, changes);
     this.overlayDirty = true;
+  }
+
+  /** Bugle calls for captures, a flare-up as each capture-point brazier is lit, a fanfare for victory. */
+  private playCues(prev: GameState, state: GameState, changes: { terrain: string; owner: number; pos: THREE.Vector3 }[]) {
+    for (const c of changes) {
+      if (c.owner === 0) continue;
+      if (c.terrain === 'capture_point') this.audio.bugle(c.pos, 'capture');
+      else if (c.terrain === 'supply_node') this.audio.bugle(c.pos, 'depot');
+    }
+    const held = (s: GameState) => (s.capturePointOwner ? s.capturePointTurns : 0);
+    const before = held(prev), now = held(state);
+    if (now > before && this.scenery) {
+      const p = this.scenery.braziers[Math.min(now, this.scenery.braziers.length) - 1];
+      if (p) {
+        this.audio.ignite(p);
+        for (let i = 0; i < 14; i++) this.effects.fire(p, 1.6);
+        this.effects.sparks(p, 12);
+      }
+    }
+    if (state.winner && !prev.winner) this.audio.bugle(null, 'victory', 0.4);
   }
 
   setOptions(opts: Partial<BattlefieldOptions>) {
@@ -141,12 +168,36 @@ export class Battlefield {
     if (prevQuality !== this.opts.quality) this.applyQuality();
   }
 
-  /** Mirrors the 2D view's map rotation (0 = player 1's side, 180 = player 2's). */
+  /**
+   * Mirrors the 2D view's map rotation. A ±90° step is the "Rotate View" button
+   * and turns the camera relative to where it is; any other change is the AI
+   * mode switching sides (0 = player 1, 180 = player 2), applied absolutely.
+   */
   setRotation(deg: number) {
-    if (this.rotationDeg === deg) return;
-    const first = this.rotationDeg === null;
+    const prev = this.rotationDeg;
+    if (prev === deg) return;
     this.rotationDeg = deg;
-    if (!first) this.rig.rotateTo((deg * Math.PI) / 180);
+    if (prev === null) return;
+    const delta = ((((deg - prev) % 360) + 540) % 360) - 180;
+    if (Math.abs(Math.abs(delta) - 90) < 1) this.rig.rotateBy((delta * Math.PI) / 180);
+    else this.rig.rotateTo((deg * Math.PI) / 180);
+  }
+
+  /** New turn: swing round behind the army whose turn it is, looking towards the enemy. */
+  private turnCamera(state: GameState) {
+    const player = state.currentPlayer;
+    const mine = state.regiments.filter(r => r.owner === player);
+    let cx = (MAP_N * TILE) / 2, cz = player === 2 ? TILE * 4 : MAP_N * TILE - TILE * 4;
+    if (mine.length) {
+      cx = mine.reduce((a, r) => a + (r.x + 0.5) * TILE, 0) / mine.length;
+      cz = mine.reduce((a, r) => a + (r.y + 0.5) * TILE, 0) / mine.length;
+    }
+    const ahead = player === 2 ? 1 : -1;
+    const lo = TILE * 2, hi = MAP_N * TILE - TILE * 2;
+    const x = Math.min(hi, Math.max(lo, cx));
+    const z = Math.min(hi, Math.max(lo, cz + ahead * TILE * 3));
+    const y = this.model ? this.model.ground(x, z) : 0;
+    this.rig.flyTo(new THREE.Vector3(x, y, z), { azimuth: player === 2 ? Math.PI : 0, distance: 30, polar: 0.9, duration: 1.5 });
   }
 
   focusTile(tx: number, ty: number, opts: { distance?: number; polar?: number; azimuth?: number; duration?: number } = {}) {
@@ -218,7 +269,7 @@ export class Battlefield {
     this.scene.add(this.terrain);
     this.water = buildWater(this.model, this.overlay.uniforms, SUN_DIR);
     this.scene.add(this.water.mesh);
-    this.scenery = new Scenery(this.model, this.obstacles);
+    this.scenery = new Scenery(this.model, this.obstacles, { 1: nationOf(state, 1), 2: nationOf(state, 2) });
     this.scene.add(this.scenery.group);
     this.units = new UnitManager(
       this.scene,

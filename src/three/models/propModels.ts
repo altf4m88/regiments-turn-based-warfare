@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { GeoBuilder } from '../core/GeoBuilder';
+import { GeoBuilder, V3 } from '../core/GeoBuilder';
+import { clamp } from '../core/constants';
 
 const STONE = '#a9a191';
 const STONE_DARK = '#7d776b';
@@ -323,23 +324,93 @@ export const buildWell = () => {
   return b.build();
 };
 
+export interface BridgeSpec {
+  /** Landings on the two banks, along local +X from the bridge's centre. */
+  x0: number;
+  x1: number;
+  /** Open water under the deck, in the same frame. */
+  w0: number;
+  w1: number;
+  width: number;
+  /** Shift in x per unit of z, so the ends and piers lie along a river crossing at an angle. */
+  skew: number;
+  /** Walkable deck height at local x, measured before the skew. */
+  deck: (x: number) => number;
+}
+
 /**
- * A bridge deck spanning a tile along local +X (rotate for the other axis).
- * `deck` is the walkable height; piers drop into the river bed.
+ * A stone road bridge running along local +X from bank to bank: arches over
+ * the water on pointed cutwaters, a humped roadway, parapets and end posts.
+ * A skewed bridge is built square, then sheared to the river's angle.
  */
-export const buildStoneBridge = (len: number, width: number, deck: number) => {
+export const buildStoneBridge = ({ x0, x1, w0, w1, width, skew, deck }: BridgeSpec) => {
   const b = new GeoBuilder();
-  const bed = -0.5;
-  b.box(len + 0.3, 0.1, width, '#a39b89', { p: [0, deck - 0.05, 0] });
-  b.box(len + 0.3, 0.012, width - 0.12, '#8e8675', { p: [0, deck + 0.002, 0] });
-  for (const s of [-1, 1]) {
-    b.box(len + 0.3, 0.1, 0.07, STONE, { p: [0, deck + 0.05, s * (width / 2 - 0.035)] });
-    b.box(len + 0.32, 0.02, 0.09, STONE_DARK, { p: [0, deck + 0.11, s * (width / 2 - 0.035)] });
+  const BED = -0.6, SPRING = -0.12, PIER = 0.2;
+  const n = Math.max(8, Math.ceil((x1 - x0) / 0.12));
+  const xs = Array.from({ length: n + 1 }, (_, i) => x0 + ((x1 - x0) * i) / n);
+  const extrude = (shape: THREE.Shape, depth: number, z: number, color: string) => {
+    const g = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false });
+    g.translate(0, 0, z - depth / 2);
+    b.add(g, color);
+  };
+  // A strip following the deck's profile between two heights above it.
+  const band = (lo: number, hi: number, depth: number, z: number, color: string) => {
+    const s = new THREE.Shape();
+    s.moveTo(x0, deck(x0) + lo);
+    for (const x of xs) s.lineTo(x, deck(x) + hi);
+    for (let i = n; i > 0; i--) s.lineTo(xs[i], deck(xs[i]) + lo);
+    extrude(s, depth, z, color);
+  };
+
+  // Arches across the open water, with piers between them.
+  const lo = Math.max(x0 + 0.3, w0 - 0.1), hi = Math.min(x1 - 0.3, w1 + 0.1);
+  const count = Math.max(1, Math.round((hi - lo) / 0.9));
+  const span = (hi - lo - PIER * (count - 1)) / count;
+  const arches = Array.from({ length: count }, (_, k) => lo + k * (span + PIER));
+
+  // Body: the deck's profile on top, abutments and piers down into the river bed,
+  // and each arch cut out of the underside.
+  const body = new THREE.Shape();
+  body.moveTo(x0, BED);
+  for (const x of xs) body.lineTo(x, deck(x) - 0.015);
+  body.lineTo(x1, BED);
+  for (let k = count - 1; k >= 0; k--) {
+    const l = arches[k], r = l + span, c = (l + r) / 2, hw = span / 2;
+    let room = Infinity;
+    for (let t = 0; t <= 1; t += 0.1) room = Math.min(room, deck(l + span * t) - 0.1 - SPRING);
+    const rise = clamp(room, 0.03, hw);
+    body.lineTo(r, BED);
+    body.lineTo(r, SPRING);
+    for (let j = 1; j < 14; j++) {
+      const a = (Math.PI * j) / 14;
+      body.lineTo(c + hw * Math.cos(a), SPRING + rise * Math.sin(a));
+    }
+    body.lineTo(l, SPRING);
+    body.lineTo(l, BED);
   }
-  for (const x of [-len * 0.22, len * 0.22]) {
-    b.box(0.22, deck - bed, width - 0.1, '#958d7c', { p: [x, (deck + bed) / 2 - 0.05, 0] });
-    b.add(new THREE.CylinderGeometry(0.11, 0.11, deck - bed, 4, 1, false, 0, Math.PI), '#958d7c', { p: [x, (deck + bed) / 2 - 0.05, width / 2 - 0.05], r: [0, -Math.PI / 2, 0] });
-    b.add(new THREE.CylinderGeometry(0.11, 0.11, deck - bed, 4, 1, false, 0, Math.PI), '#958d7c', { p: [x, (deck + bed) / 2 - 0.05, -width / 2 + 0.05], r: [0, Math.PI / 2, 0] });
+  extrude(body, width - 0.04, 0, '#958d7c');
+
+  band(-0.03, 0, width - 0.16, 0, '#8f8571'); // roadway
+  band(-0.07, -0.04, width + 0.02, 0, STONE_DARK); // string course
+  for (const side of [-1, 1]) {
+    const z = side * (width / 2 - 0.035);
+    band(-0.02, 0.11, 0.07, z, STONE); // parapet
+    band(0.11, 0.135, 0.09, z, STONE_DARK); // coping
+    for (const x of [x0 + 0.07, x1 - 0.07]) {
+      b.box(0.14, 0.24, 0.13, STONE_DARK, { p: [x, deck(x) + 0.08, z] });
+      b.box(0.17, 0.03, 0.16, STONE, { p: [x, deck(x) + 0.215, z] });
+    }
+    // Pointed cutwaters on both faces of every pier.
+    for (let k = 1; k < count; k++) {
+      const px = arches[k] - PIER / 2, h = SPRING + 0.1 - BED;
+      const r: V3 = [0, side > 0 ? -Math.PI / 2 : Math.PI / 2, 0];
+      const pz = side * (width / 2 - 0.05);
+      b.add(new THREE.CylinderGeometry(PIER / 2 + 0.01, PIER / 2 + 0.01, h, 2, 1, false, 0, Math.PI), '#958d7c', { p: [px, BED + h / 2, pz], r });
+      b.add(new THREE.ConeGeometry(PIER / 2 + 0.01, 0.12, 2, 1, false, 0, Math.PI), STONE_DARK, { p: [px, SPRING + 0.16, pz], r });
+    }
   }
-  return b.build();
+  const geo = b.build();
+  // Skew the whole bridge (x += skew * z) so abutments, piers and cutwaters follow the banks.
+  if (skew) geo.applyMatrix4(new THREE.Matrix4().set(1, 0, skew, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1));
+  return geo;
 };
