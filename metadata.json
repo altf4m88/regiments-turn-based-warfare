@@ -1,5 +1,5 @@
 {
   "name": "Remix: Regiment Commander: Turn-Based Strategy",
-  "description": "A tile-based 2D strategy game where you command army regiments. Manage movement points, attack enemies, and entrench positions in turn-based combat.",
+  "description": "A turn-based strategy game of Napoleonic regiments, fought on a procedurally generated 3D battlefield (or the classic 2D map). Manage movement points, facing, supply and capture points, or watch AI generals battle.",
   "requestFramePermissions": []
 }
