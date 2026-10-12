@@ -359,6 +359,20 @@ export const getInitialState = (nations: { [player: number]: Nation } = DEFAULT_
   };
 };
 
+/**
+ * Whether an attack from (x, y) hits a regiment in the flank. Its front is the 90° cone
+ * ahead of its facing (facing north: a smaller y, and no more columns to the side than
+ * rows ahead); an attack from anywhere else, the side or the rear, is a flank attack.
+ */
+export const isFlankAttack = (defender: Pick<Regiment, 'x' | 'y' | 'facing'>, x: number, y: number) => {
+  const dx = x - defender.x, dy = y - defender.y;
+  const [ahead, aside] =
+    defender.facing === 'north' ? [-dy, dx] :
+    defender.facing === 'south' ? [dy, dx] :
+    defender.facing === 'east' ? [dx, dy] : [-dx, dy];
+  return !(ahead > 0 && Math.abs(aside) <= ahead);
+};
+
 export const calculateDamage = (attacker: Regiment, defender: Regiment, defenderTerrain: Tile['terrain']): number => {
   let terrainBonus = getTerrainDefenseBonus(defenderTerrain);
   
@@ -371,24 +385,13 @@ export const calculateDamage = (attacker: Regiment, defender: Regiment, defender
   const entrenchBonus = defender.isEntrenched ? 0.6 : 0;
   const palisadeBonus = defender.isPalisaded ? 0.7 : 0;
   
-  // Flanking damage
+  // Flanking damage: an attack from the side or the rear. A square has no flank.
   let flankingBonus = 1.0;
-  if (!defender.isBoxFormation) {
-    const dx = attacker.x - defender.x;
-    const dy = attacker.y - defender.y;
-    let isBehind = false;
-    switch (defender.facing) {
-      case 'north': isBehind = dy > 0; break;
-      case 'south': isBehind = dy < 0; break;
-      case 'east': isBehind = dx < 0; break;
-      case 'west': isBehind = dx > 0; break;
-    }
-    if (isBehind) {
-      if (attacker.type === 'hussars' && defender.type === 'line_infantry') {
-        flankingBonus = 2.0; // Hussars double damage vs Line Infantry flanks
-      } else {
-        flankingBonus = 1.5;
-      }
+  if (!defender.isBoxFormation && isFlankAttack(defender, attacker.x, attacker.y)) {
+    if (attacker.type === 'hussars' && defender.type === 'line_infantry') {
+      flankingBonus = 2.0; // Hussars double damage vs Line Infantry flanks
+    } else {
+      flankingBonus = 1.5;
     }
   }
 

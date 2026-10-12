@@ -60,7 +60,7 @@ Movement Points (MP) are consumed based on the terrain type:
 *   **Rotation**: You can rotate a unit's facing for **1 MP**. This is crucial for repositioning your firing line.
 *   **Range**: Distance is the larger of the horizontal and vertical gaps, so diagonals count as 1. Ranges are in the table above.
 *   **Damage**: Damage is calculated based on the number of men, attack stats, and the target's effective defense (terrain + entrenchment + palisades, at most 95%).
-*   **Rear Attacks**: Attacking a unit from behind its facing deals +50% damage (Hussars hitting Line Infantry from behind deal double). Side attacks get no bonus.
+*   **Flanking**: A unit's front is the 90° cone ahead of its facing. Attacks from anywhere else, the side or the rear, deal +50% damage (Hussars hitting Line Infantry in the flank deal double). Return fire follows the same rule, so face your target.
 *   **Zone of Control**: An empty tile between two enemy Line Infantry (left and right, or above and below) cannot be entered by infantry or cannon. Cavalry can pass but lose 15% of their men.
 
 ---

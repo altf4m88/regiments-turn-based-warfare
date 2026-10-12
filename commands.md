@@ -53,7 +53,7 @@ This document provides a comprehensive list of commands, their usage, and the ru
     -   **River**: 3 MP.
 3.  **Combat**:
     -   Units have a **Firing Line** (facing). Line Infantry can only shoot forward.
-    -   **Rear Attacks**: Attacking a unit from behind its facing deals 50% more damage. Side attacks get no bonus.
+    -   **Flanking**: Attacking a unit from its side or rear (anywhere outside the 90° cone ahead of its facing) deals 50% more damage.
     -   **Cavalry**: Devastating against Light Infantry in the open and Line Infantry flanks.
     -   **Cannons**: Long range, but weak at close range (adjacent). Deal double damage to units in Box Formation.
     -   **Squares**: Cavalry deal only 25% damage to Line Infantry in Box Formation and take full return fire; the square's own fire is halved against everything except cavalry.

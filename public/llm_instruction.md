@@ -48,7 +48,7 @@ Regiment IDs look like `p1-l3`: the player, then the type (`l` line infantry, `l
 
 **Damage.** A regiment's damage grows with its remaining men, so a battered regiment hits softer. The target's defense is its base defense plus terrain, +60% if entrenched and +70% if palisaded (95% at most). Modifiers:
 
-- **Rear attacks.** Attacking a regiment from behind deals +50%. "Behind" means the half of the board at its back: for a north-facing target, any attacker with a larger y. Hussars hitting line infantry from behind deal ×2. Attacks from the side or front get no bonus.
+- **Flank attacks.** A regiment's front is the 90° cone ahead of its facing. For a north-facing regiment at 10:10, that means attackers with a smaller y and no more columns to the side than rows ahead: 10:8 and 11:8 are in front, but 12:9, 11:10 and 10:11 are not. An attack from anywhere outside the front, the side or the rear, deals +50%. Hussars hitting line infantry in the flank deal ×2. Squares cannot be flanked. Return fire follows the same rule, so a regiment that attacks something on its own flank takes +50% return fire: face your target.
 - **Cavalry vs skirmishers.** Hussars deal ×2.5 against light infantry; chasseurs deal ×1.5.
 - **Cannon.** Deals ×0.5 against entrenched regiments, ×2 against squares (Box Formation), and only 30% at distance 1.
 - **Squares.** Cavalry deal only 25% to a square. A square deals only 50% against infantry and cannon.
@@ -94,7 +94,7 @@ You also have free information commands: `status`, `whoami`, `ls` (your regiment
 - **Tempo wins; waiting loses.** Nothing scores while armies trade cannon fire at long range. The side that owns the center wins in 5 turns, so the side that does not own it must attack. Within the first few turns, bring your line infantry to musket range (2) of the enemy and fire every turn. Cannon soften a line before the assault; they are not a substitute for it.
 - **Entrench only where you mean to hold** (the approaches to the center, your Command Center). An entrenched regiment out of range of the enemy does nothing, and it cannot advance.
 - **Line infantry is the anvil.** Lines two tiles apart wall off enemy infantry. Face them toward the enemy and fire every turn; a regiment that marched still has its attack.
-- **Hussars are the hammer.** Use roads to get around the flanks. Hit light infantry, line infantry from behind, and cannon. Never charge the front of line infantry or a square.
+- **Hussars are the hammer.** Use roads to get around the flanks. Hit light infantry, the flanks of line infantry, and cannon. Never charge the front of line infantry or a square.
 - **Chasseurs and light infantry skirmish.** Line infantry cannot shoot back at them, and forests and villages protect them.
 - **Cannon have range 8.** Keep them a few tiles behind your line, out of cavalry reach, and pound enemy squares and lines. Palisade guns that will hold a position.
 - **Reinforcements only count once they fight.** They appear at your Command Center, far behind the front. Starting the turn after they arrive, march them toward the battle every turn, using roads where you can. A reserve that never moves wastes its cost. Before buying another regiment, ask whether the last one has reached the fight yet.
