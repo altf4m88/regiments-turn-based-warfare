@@ -123,7 +123,7 @@ export class UnitManager {
         const nv = new RegimentVisual(this.ctx, r, { spawnFrom: cc ?? undefined });
         nv.setLabelVisible(this.labelsVisible);
         this.regs.set(r.id, nv);
-        this.audio.bugle(nv.pos3());
+        this.audio.bugle(nv.pos3(), 'reinforce');
         this.onAction({ kind: 'spawn', from: nv.pos3(), to: nv.pos3() });
         continue;
       }

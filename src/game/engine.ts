@@ -352,6 +352,9 @@ export const calculateDamage = (attacker: Regiment, defender: Regiment, defender
     if (defender.isEntrenched) {
       bonus *= 0.5; // Cannons less effective vs entrenched
     }
+    if (defender.isBoxFormation) {
+      bonus *= 2; // A packed infantry square is a perfect artillery target
+    }
   }
 
   const effectiveDefense = Math.min(baseDefense + terrainBonus + entrenchBonus + palisadeBonus, 0.95);

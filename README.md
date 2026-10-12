@@ -8,7 +8,7 @@ The battle now plays out on a fully 3D field (toggle **3D / 2D** in the header; 
 
 **The map.** The 20×20 tile map becomes a continuous landscape with rolling hills, wooded copses, villages with churches and garden walls, a river that winds across the field (stone bridges wherever the road crosses it), and dirt roads lined with poplars beyond the battlefield. Each army's headquarters (a manor, tents, an artillery park and horse lines) sits behind its command centre. Supply depots have wagons and crates and fly their owner's banner. At the capture point, one brazier is lit for every turn it has been held.
 
-**The regiments.** Napoleonic miniatures, about half a unit tall:
+**The regiments.** Napoleonic miniatures, about half a unit tall, in period uniforms. Player 1's British regiments wear red coats, with rifle-green Rifles and blue Royal Artillery and hussars. Player 2's French regiments wear imperial blue, with chamois-collared voltigeurs and green hussars and chasseurs à cheval.
 - Line infantry stand in three ranks with their colours (painted with each regiment's own `standardColor`), an officer and a drummer.
 - Light infantry deploy in a loose skirmish chain.
 - Gunners crew their field pieces.
@@ -24,9 +24,15 @@ The number of figures tracks each regiment's strength.
 - Men fall when the shot lands and stay on the field. Regiments that are wiped out drop their colours with a "ROUTED" marker.
 - Entrenching throws up earthworks, cannon erect palisades, units wade through fords, and reinforcements march out of the command centre.
 - Flags, trees and grass move in the wind, and the water flows.
-- Sound (volleys, cannon, hooves, sabres, drums, a bugle) is synthesised with WebAudio.
+- Sound is synthesised with WebAudio, with a field reverb, and distant fire is muffled by distance. It covers:
+  - gritty, crackling musket volleys and ragged skirmish fire
+  - cannon, and round shot landing
+  - boots marching behind the drum, and the Rifles' bugle-horn
+  - galloping squadrons and gun teams rumbling into place
+  - sabres whistling and clashing in a charge
+  - bugle calls when the capture point or a depot changes hands, a flare-up as each capture-point brazier is lit, and a victory fanfare
 
-**Playing in 3D.** Hovering a tile shows its terrain, MP cost and defence, plus a march path or an "engage" hint. The selected regiment's march range, dangerous gaps in the enemy line, firing arc and attackable targets are painted on the ground. Clicking a distant reachable tile marches there using the same `mv` command the CLI and the AI use. The **Follow** camera (on by default in AI mode) flies to the action, and a minimap shows where you are looking.
+**Playing in 3D.** Hovering a tile shows its terrain, MP cost and defence, plus a march path or an "engage" hint. The selected regiment's march range, dangerous gaps in the enemy line, firing arc and attackable targets are painted on the ground. Clicking a distant reachable tile marches there using the same `mv` command the CLI and the AI use. At every turn change the camera swings round behind the army whose turn it is. The **Follow** camera (on by default in AI mode) flies to the action, and a minimap shows where you are looking.
 
 | Input | Action |
 | :--- | :--- |

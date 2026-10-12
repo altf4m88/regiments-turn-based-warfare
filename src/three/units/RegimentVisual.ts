@@ -5,8 +5,8 @@ import { TEAM, TILE, TeamId, WATER_LEVEL, angleDelta, clamp, facingToHeading, sm
 import { hashString } from '../core/noise';
 import {
   FLAG_ANCHOR, FootKind, FootPose, GUIDON_ANCHOR, HIP_Y, HORSE_LEGS, HORSE_LEG_TOP, LEG_X, MUZZLE, RIDER_SHOULDER, RiderPose,
-  WHEEL_R, WHEEL_X, buildEarthworks, buildFootArms, buildFootBody, buildGun, buildHorseBody, buildHorseLeg, buildLeg,
-  buildPalisade, buildRider, buildRiderArm, buildWheel, footTrousers,
+  WHEEL_R, WHEEL_X, buildEarthworks, buildFootArms, buildFootBody, buildFootLeg, buildGun, buildHorseBody, buildHorseLeg,
+  buildPalisade, buildRider, buildRiderArm, buildWheel,
 } from '../models/unitModels';
 import { disposeFlagMesh, makeFlagMesh, makeFlagTexture } from '../models/flags';
 import { Effects } from '../scene/effects';
@@ -228,6 +228,7 @@ export class RegimentVisual {
     let foot: FootKind | null = null;
     if (!mounted && role !== 'gun') {
       foot = role === 'rank' ? (kind as FootKind) : role === 'guidon' ? 'bearer' : (role as FootKind);
+      if (foot === 'officer' && this.type === 'light_infantry') foot = 'lightOfficer';
     }
     return {
       role,
@@ -308,7 +309,7 @@ export class RegimentVisual {
     if (old.x !== r.x || old.y !== r.y) {
       const steps = path && path.length ? path : [{ x: r.x, y: r.y }];
       for (const s of steps) this.path.push(new THREE.Vector2((s.x + 0.5) * TILE, (s.y + 0.5) * TILE));
-      if (this.type === 'line_infantry') this.ctx.audio.drum(this.pos3());
+      this.marchSound();
     }
     const n = this.targetRankCount();
     const alive = this.rankFigures().filter(f => !f.doomed).length;
@@ -321,6 +322,32 @@ export class RegimentVisual {
       this.ctx.effects.digging(this.pos3(), 0.8, this.heading);
     }
     this.updateLabel();
+  }
+
+  /** Boots, horns, hooves or wheels for the march just ordered, lasting as long as it will take. */
+  private marchSound() {
+    let dist = 0;
+    let px = this.anchor.x, pz = this.anchor.y;
+    let mx = px, mz = pz;
+    for (const p of this.path) {
+      dist += Math.hypot(p.x - px, p.y - pz);
+      px = p.x;
+      pz = p.y;
+    }
+    if (this.path.length) {
+      const mid = this.path[Math.floor((this.path.length - 1) / 2)];
+      mx = (this.anchor.x + mid.x) / 2;
+      mz = (this.anchor.y + mid.y) / 2;
+    }
+    const pos = new THREE.Vector3(mx, this.ctx.model.ground(mx, mz), mz);
+    const dur = dist / SPEED[this.type] + 0.4;
+    const audio = this.ctx.audio;
+    switch (this.type) {
+      case 'line_infantry': audio.march(pos, dur, 'line'); break;
+      case 'light_infantry': audio.march(pos, dur, 'light'); break;
+      case 'cannon': audio.wheels(pos, dur); break;
+      default: audio.hooves(pos, dur, 0, dist > TILE * 1.5);
+    }
   }
 
   private reinforce() {
@@ -415,13 +442,14 @@ export class RegimentVisual {
       this.charge = { start: t0 + 0.15, contact: t0 + 0.15 + dur, hold: 0.55, back: 1.3, dx: fx * reach, dz: fz * reach, target: target.clone() };
       for (const f of this.figures) if (f.rider) f.poseUntil = t0 + 0.15 + dur + 0.55;
       const contact = t0 + 0.15 + dur;
-      this.ctx.audio.hooves(me, dur + 0.6, delay);
+      this.ctx.audio.bugle(me, 'charge', delay);
+      this.ctx.audio.hooves(me, dur + 0.6, delay + 0.1);
       this.timeline.push({
         at: contact,
         fn: () => {
           this.ctx.effects.sparks(new THREE.Vector3(target.x, target.y + 0.4, target.z), 14);
           this.ctx.effects.hoofDust(target, 2);
-          this.ctx.audio.clash(target);
+          this.ctx.audio.melee(target, 0.55 + 0.6);
           for (const f of this.figures) if (f.rider && !f.dying) f.slashAt = this.now + Math.random() * 0.35;
         },
       });
@@ -476,7 +504,7 @@ export class RegimentVisual {
     }
     const officer = this.figures.find(f => f.role === 'officer' && !f.dying);
     if (officer) officer.poseUntil = t0 + base + 0.1;
-    this.ctx.audio.volley(me, Math.ceil(shooters.length * 0.6), volley ? 0.16 : 0.9, delay + base);
+    this.ctx.audio.volley(me, shooters.length, volley ? 0.14 : 0.9, delay + base);
     const kicks = Math.min(14, shooters.length);
     for (let i = 0; i < kicks; i++) {
       this.timeline.push({
@@ -686,6 +714,7 @@ export class RegimentVisual {
       case 'light':
         return f.aimFrom >= 0 && now >= f.aimFrom && now <= f.aimTo ? 'aim' : 'carry';
       case 'officer':
+      case 'lightOfficer':
         return now < f.poseUntil ? 'up' : 'down';
       case 'drummer':
         return 'beat';
@@ -731,7 +760,7 @@ export class RegimentVisual {
       if (f.role === 'guidon') { armKind = 'guidon'; pose = 'carry'; }
       else if (rk === 'hussar') pose = now < f.poseUntil ? 'charge' : 'rest';
       else pose = f.aimFrom >= 0 && now >= f.aimFrom && now <= f.aimTo ? 'aim' : 'rest';
-      const armBatch = B.get(`ra:${armKind}:${pose}:${team}`, () => buildRiderArm(armKind, pose, team), 32);
+      const armBatch = B.get(`ra:${armKind}:${pose}:${team}:${rk}`, () => buildRiderArm(armKind, pose, team, rk), 32);
       if (f.slashAt >= 0 && now >= f.slashAt && now < f.slashAt + 0.45 && !f.dying) {
         const t = (now - f.slashAt) / 0.45;
         const ang = Math.sin(t * Math.PI) * 1.7;
@@ -751,7 +780,7 @@ export class RegimentVisual {
     for (const s of [-1, 1]) {
       _m2.makeRotationX(swing * s);
       _m2.setPosition(s * LEG_X, HIP_Y, 0);
-      push(B.get(`fl:${kind}:${team}`, () => buildLeg(footTrousers(kind, team)), kind === 'line' ? 384 : 96), _m3.multiplyMatrices(root, _m2));
+      push(B.get(`fl:${kind}:${team}`, () => buildFootLeg(kind, team), kind === 'line' ? 384 : 96), _m3.multiplyMatrices(root, _m2));
     }
     const pose = this.footPose(f, now);
     const armBatch = B.get(`fa:${kind}:${pose}:${team}`, () => buildFootArms(kind, pose, team), kind === 'line' ? 192 : 48);

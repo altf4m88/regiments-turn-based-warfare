@@ -46,6 +46,7 @@ Cavalry Breaches: Enemy cavalry can pass through these gaps, but they will take 
 Entrenchment: Use the ent <id> command when holding a position. It consumes all remaining MP (minimum 1 required) but grants a massive static defense bonus. NOTE: You CANNOT entrench on the Strategic Point (10:10).
 
 Box Formation: If enemy cavalry (Hussars) approach within charge distance, use box <id> to form a Box Formation. You lose attack power but gain 360° firing arcs and a massive defense bonus specifically against cavalry charges.
+WARNING: Cannon fire deals DOUBLE damage to a unit in Box Formation. Only form a square when the cavalry threat is real, and disband it (box <id> again) once the cavalry is gone or enemy guns have you in range.
 
 Light Infantry & Chasseurs (The Skirmishers)
 
@@ -61,7 +62,7 @@ Flanking & Breaching: Attacking from the side/rear deals +50% damage. You can pu
 
 Cannons (The Artillery)
 
-Strategy: Keep them 3-5 tiles behind your main line. They do minimal damage to adjacent targets but devastate at long range.
+Strategy: Keep them 3-5 tiles behind your main line. They do minimal damage to adjacent targets but devastate at long range. Enemy Line Infantry in Box Formation take DOUBLE damage from cannon fire: when the enemy forms squares against your cavalry, turn your guns on them.
 
 Defense: If threatened but not moving, use pal <id> to construct Palisades for a heavy defense boost.
 

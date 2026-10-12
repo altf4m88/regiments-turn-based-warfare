@@ -62,6 +62,7 @@ Movement Points (MP) are consumed based on the terrain type:
     *   Grants 360° firing arc.
     *   Massive defense bonus against Cavalry.
     *   Reduces Attack and Max MP.
+    *   **Vulnerable to artillery**: Cannon fire deals **double damage** to a unit in Box Formation.
 *   **Palisades (1 MP)**: (Cannons only)
     *   Grants a significant defense bonus.
     *   Restricts firing to a 90° frontal cone.
@@ -71,5 +72,6 @@ Movement Points (MP) are consumed based on the terrain type:
 ## 💡 Tactical Tips
 *   **Protect the Flanks**: Line Infantry are vulnerable if the enemy moves outside their narrow firing line.
 *   **Combined Arms**: Use Hussars to hunt down Light Infantry, and Cannons to soften up entrenched positions.
+*   **Squares Invite Shot**: A Box Formation that stops cavalry is a gift to enemy guns. Pin the enemy with Hussars, then let the Cannons fire into the square.
 *   **Supply is Key**: Don't ignore the Supply Nodes in the center; they provide the extra resources needed for a prolonged war.
 *   **The Center Holds**: The Capture Point is the fastest way to win if you can establish a strong defensive perimeter around it.

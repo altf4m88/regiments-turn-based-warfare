@@ -22,29 +22,10 @@ export const RIVER_BED = -0.42;
 /** Wind blows toward +x / slightly +z. Shared by flags, smoke, trees. */
 export const WIND = { x: 0.9, z: 0.35 };
 
+/** UI identity of each side (labels, overlays, minimap). Uniform colours live in models/uniforms.ts. */
 export const TEAM = {
-  1: {
-    name: 'Player 1',
-    css: '#2563eb',
-    coat: '#2b4c8c',
-    coatDark: '#1d3461',
-    facing: '#e9dcb0',
-    trousers: '#e7e3d8',
-    plume: '#f4f4f0',
-    carriage: '#5b6b79',
-    flagBase: '#1d3461',
-  },
-  2: {
-    name: 'Player 2',
-    css: '#dc2626',
-    coat: '#a3271f',
-    coatDark: '#6b1913',
-    facing: '#1f2d55',
-    trousers: '#d8d2c2',
-    plume: '#c8102e',
-    carriage: '#5d6b3a',
-    flagBase: '#6b1913',
-  },
+  1: { name: 'Player 1', css: '#2563eb' },
+  2: { name: 'Player 2', css: '#dc2626' },
 } as const;
 
 export type TeamId = 1 | 2;

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { Tile } from '../../game/types';
 import { BORDER, BRIDGE_WIDTH, MAP_N, TEAM, TILE, WATER_LEVEL, WIND, inMap, tileCenter } from '../core/constants';
+import { ARMY_COAT } from '../models/uniforms';
 import { hash2, makeRng } from '../core/noise';
 import * as P from '../models/propModels';
 import { buildGun, buildHorseBody, buildHorseLeg, buildWheel, HORSE_LEGS, HORSE_LEG_TOP, WHEEL_R, WHEEL_X } from '../models/unitModels';
@@ -382,7 +383,7 @@ export class Scenery {
           const owner = tile.owner ?? (ty < MAP_N / 2 ? 2 : 1);
           const dir = ty < MAP_N / 2 ? -1 : 1;
           this.makeBanner(cx, cz + dir * 0.82, 2.0, owner, 0.55, tx, ty);
-          this.put('marquee', () => P.buildMarquee(owner === 1 ? '#2b4c8c' : '#a3271f'), cx - 0.66, cz + dir * 0.62, 0, 1);
+          this.put(`marquee-${owner}`, () => P.buildMarquee(ARMY_COAT[owner === 2 ? 2 : 1]), cx - 0.66, cz + dir * 0.62, 0, 1);
           this.obstacles.add(cx - 0.66, cz + dir * 0.62, 0.28);
           this.put('tent', () => P.buildTent(), cx + 0.62, cz + dir * 0.68, dir > 0 ? Math.PI : 0, 1);
           this.obstacles.add(cx + 0.62, cz + dir * 0.68, 0.2);
@@ -399,7 +400,6 @@ export class Scenery {
       const dir = owner === 1 ? 1 : -1;
       const { x: cx, z: ccz } = tileCenter(10, ccY);
       const rng = makeRng(owner * 1337 + m.seed);
-      const T = TEAM[owner];
       // Manor house used as headquarters, courtyard facing the battlefield.
       const mz = ccz + dir * TILE * 3.4;
       this.single(P.buildManor(), cx, m.ground(cx, mz) - 0.04, mz, dir > 0 ? Math.PI : 0);
@@ -409,7 +409,7 @@ export class Scenery {
           for (let col = 0; col < 5; col++) {
             const x = cx + side * (2.4 + col * 0.62);
             const z = ccz + dir * (1.7 + row * 0.75);
-            const stripe = col === 0 && row === 0 ? T.coat : undefined;
+            const stripe = col === 0 && row === 0 ? ARMY_COAT[owner] : undefined;
             this.put(stripe ? `tent-${owner}` : 'tent', () => P.buildTent(stripe), x, z, dir > 0 ? Math.PI : 0, 1);
           }
         }
@@ -524,12 +524,18 @@ export class Scenery {
 
   // -- dynamic state ---------------------------------------------------------
 
-  /** Syncs banner colours and the capture-point ring with ownership in the game state. */
+  /**
+   * Syncs banner colours and the capture-point ring with ownership in the game
+   * state, and reports which strategic sites just changed hands.
+   */
   updateOwners(map: Tile[][], capturePointOwner: number | null) {
+    const changes: { terrain: Tile['terrain']; owner: number; pos: THREE.Vector3 }[] = [];
     for (const b of this.banners) {
       if (b.tx < 0) continue;
-      const owner = map[b.ty]?.[b.tx]?.owner ?? 0;
+      const tile = map[b.ty]?.[b.tx];
+      const owner = tile?.owner ?? 0;
       if (owner !== b.owner) {
+        if (tile) changes.push({ terrain: tile.terrain, owner, pos: b.pole.clone() });
         b.owner = owner;
         b.raise = 0;
         (b.mesh.material as THREE.MeshStandardMaterial).map = this.bannerTex[owner] ?? this.bannerTex[0];
@@ -541,6 +547,7 @@ export class Scenery {
       mat.color.set(capturePointOwner === 1 ? TEAM[1].css : capturePointOwner === 2 ? TEAM[2].css : '#ffffff');
       this.captureRing.userData.owner = capturePointOwner;
     }
+    return changes;
   }
 
   update(dt: number, time: number) {
