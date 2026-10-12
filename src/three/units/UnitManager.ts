@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { GameAnimation, GameState, Regiment } from '../../game/types';
-import { findPath } from '../../game/engine';
+import { findPath, nationOf } from '../../game/engine';
 import { TILE, tileCenter } from '../core/constants';
 import { BattleAudio } from '../scene/audio';
 import { Effects } from '../scene/effects';
@@ -68,7 +68,7 @@ export class UnitManager {
     if (!this.initialized) {
       this.initialized = true;
       for (const a of state.animations) this.seen.add(a.id);
-      for (const r of state.regiments) this.regs.set(r.id, new RegimentVisual(this.ctx, r));
+      for (const r of state.regiments) this.regs.set(r.id, new RegimentVisual(this.ctx, r, { nation: nationOf(state, r.owner) }));
       this.applySelection(state, null);
       return;
     }
@@ -92,7 +92,7 @@ export class UnitManager {
       if (!attacker) continue;
       const tc = tileCenter(a.toX, a.toY);
       const tpos = target ? target.pos3() : new THREE.Vector3(tc.x, this.model.ground(tc.x, tc.z), tc.z);
-      const impact = attacker.attack(tpos, now);
+      const impact = attacker.attack(tpos, now, 0, { intoSquare: !!target?.data.isBoxFormation });
       if (target) target.impactAt = Math.max(target.impactAt, impact);
       const counter = damages.some(d => d.fromX === a.fromX && d.fromY === a.fromY);
       if (counter && target && ids.has(target.id)) {
@@ -120,7 +120,7 @@ export class UnitManager {
       const v = this.regs.get(r.id);
       if (!v) {
         const cc = this.findCommandCentre(state, r.owner);
-        const nv = new RegimentVisual(this.ctx, r, { spawnFrom: cc ?? undefined });
+        const nv = new RegimentVisual(this.ctx, r, { nation: nationOf(state, r.owner), spawnFrom: cc ?? undefined });
         nv.setLabelVisible(this.labelsVisible);
         this.regs.set(r.id, nv);
         this.audio.bugle(nv.pos3(), 'reinforce');

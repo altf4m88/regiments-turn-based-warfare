@@ -22,13 +22,9 @@ export const RIVER_BED = -0.42;
 /** Wind blows toward +x / slightly +z. Shared by flags, smoke, trees. */
 export const WIND = { x: 0.9, z: 0.35 };
 
-/** UI identity of each side (labels, overlays, minimap). Uniform colours live in models/uniforms.ts. */
-export const TEAM = {
-  1: { name: 'Player 1', css: '#2563eb' },
-  2: { name: 'Player 2', css: '#dc2626' },
-} as const;
+/** UI colour of each army (labels, overlays, minimap): British red, French blue. */
+export const NATION_CSS = { british: '#dc2626', french: '#2563eb' } as const;
 
-export type TeamId = 1 | 2;
 
 export const tileCenter = (tx: number, ty: number) => ({ x: (tx + 0.5) * TILE, z: (ty + 0.5) * TILE });
 

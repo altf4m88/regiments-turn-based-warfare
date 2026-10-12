@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Crosshair, Eye, Grid3x3, Map as MapIcon, Sparkles, Tag, Video, Volume2, VolumeX } from 'lucide-react';
-import { GameState, Tile } from '../game/types';
-import { getTerrainDefenseBonus, getTerrainMpCost } from '../game/engine';
+import { GameState, Nation, Tile } from '../game/types';
+import { NATIONS, getTerrainDefenseBonus, getTerrainMpCost, nationOf } from '../game/engine';
 import { Battlefield, BattlefieldOptions, CameraView } from './scene/Battlefield';
 import { HoverInfo } from './scene/highlights';
 import { MAP_N, TILE } from './core/constants';
@@ -36,6 +36,12 @@ const MINI_COLORS: Record<Tile['terrain'], string> = {
   command_center: '#e8e4d8',
   supply_node: '#e0b84a',
   capture_point: '#d9d3c2',
+};
+
+/** Per-army colours for the minimap and overlays: British red, French blue (literal Tailwind classes). */
+const ARMY: Record<Nation, { tile: string; unit: string; light: string; banner: string; dark: string }> = {
+  british: { tile: '#dc2626', unit: '#b91c1c', light: 'text-red-300', banner: 'text-red-200', dark: 'text-red-800' },
+  french: { tile: '#2563eb', unit: '#1d4ed8', light: 'text-blue-300', banner: 'text-blue-200', dark: 'text-blue-800' },
 };
 
 const loadOpts = (aiMode: boolean): BattlefieldOptions => {
@@ -75,13 +81,13 @@ const Minimap = ({ state, view, onPick }: { state: GameState; view: CameraView |
       g.fillStyle = MINI_COLORS[t.terrain];
       g.fillRect(t.x * s, t.y * s, s + 0.5, s + 0.5);
       if (t.owner) {
-        g.strokeStyle = t.owner === 1 ? '#2563eb' : '#dc2626';
+        g.strokeStyle = ARMY[nationOf(state, t.owner)].tile;
         g.lineWidth = 1.5;
         g.strokeRect(t.x * s + 1, t.y * s + 1, s - 2, s - 2);
       }
     }
     for (const r of state.regiments) {
-      g.fillStyle = r.owner === 1 ? '#1d4ed8' : '#b91c1c';
+      g.fillStyle = ARMY[nationOf(state, r.owner)].unit;
       const pad = r.type === 'cannon' ? 2.2 : 1.4;
       g.fillRect(r.x * s + pad, r.y * s + pad, s - pad * 2, s - pad * 2);
       if (r.id === state.selectedUnitId) {
@@ -250,7 +256,7 @@ export default function BattlefieldView({ gameState, mapRotation, aiMode, onTile
         <Minimap state={gameState} view={view} onPick={(x, z) => bfRef.current?.focusWorld(x, z)} />
         <div className="flex justify-between px-1.5 py-0.5 text-[8px] font-mono uppercase text-[#E4E3E0]/70">
           <span>Turn {gameState.turn}</span>
-          <span className={gameState.currentPlayer === 1 ? 'text-blue-300' : 'text-red-300'}>P{gameState.currentPlayer} to move</span>
+          <span className={ARMY[nationOf(gameState, gameState.currentPlayer)].light}>P{gameState.currentPlayer} to move</span>
         </div>
       </div>
 
@@ -270,9 +276,10 @@ export default function BattlefieldView({ gameState, mapRotation, aiMode, onTile
       {banner && (
         <div key={banner.key} className="bf-turn-banner absolute left-1/2 top-[18%] z-20 pointer-events-none text-center">
           <div className="text-[10px] font-mono uppercase tracking-[0.4em] text-[#E4E3E0]/80">Turn {banner.turn}</div>
-          <div className={'text-4xl font-serif italic font-bold tracking-tight ' + (banner.player === 1 ? 'text-blue-200' : 'text-red-200')}>
-            Player {banner.player} to march
+          <div className={'text-4xl font-serif italic font-bold tracking-tight ' + ARMY[nationOf(gameState, banner.player)].banner}>
+            The {NATIONS[nationOf(gameState, banner.player)].adjective} march
           </div>
+          <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-[#E4E3E0]/70 mt-1">Player {banner.player}</div>
         </div>
       )}
 
@@ -291,7 +298,7 @@ export default function BattlefieldView({ gameState, mapRotation, aiMode, onTile
             {tooltip.tile.owner ? ` · P${tooltip.tile.owner}` : ''}
           </div>
           {tooltip.unit && (
-            <div className={'mt-1 pt-1 border-t border-[#141414]/20 ' + (tooltip.unit.owner === 1 ? 'text-blue-800' : 'text-red-800')}>
+            <div className={'mt-1 pt-1 border-t border-[#141414]/20 ' + ARMY[nationOf(gameState, tooltip.unit.owner)].dark}>
               <div className="font-bold">{tooltip.unit.name}</div>
               <div className="opacity-80">{tooltip.unit.id} · {tooltip.unit.men}/{tooltip.unit.maxMen} men · {tooltip.unit.mp} MP</div>
             </div>

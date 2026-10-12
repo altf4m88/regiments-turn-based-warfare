@@ -36,7 +36,7 @@ This document provides a comprehensive list of commands, their usage, and the ru
 | `rtr` | `rtr <id>` | Rotates a unit 90° clockwise. Costs 1 MP. |
 | `rtl` | `rtl <id>` | Rotates a unit 90° counter-clockwise. Costs 1 MP. |
 | `rlt` | `rlt <id>` | Alias for `rtl`. |
-| `box` | `box <id>` | Toggles Box Formation (Line Infantry only). +Defense vs Cavalry, 360° fire, but -Attack. Cannon fire deals double damage to a unit in Box Formation. |
+| `box` | `box <id>` | Toggles Box Formation (Line Infantry only, 1 MP). 360° fire; cavalry deal only 25% damage to it and take full return fire. The square deals half damage to non-cavalry, cannot move, and takes double damage from cannon. |
 | `pal` | `pal <id>` | Toggles Palisades (Cannons only). +Defense, but restricts firing arc. |
 | `spawn` | `spawn <type>` | Spawns a new unit at an adjacent empty tile near your Command Center. |
 
@@ -55,6 +55,7 @@ This document provides a comprehensive list of commands, their usage, and the ru
     -   **Flanking**: Attacking a unit from the side or rear deals 50% more damage.
     -   **Cavalry**: Devastating against Light Infantry in the open and Line Infantry flanks.
     -   **Cannons**: Long range, but weak at close range (adjacent). Deal double damage to units in Box Formation.
+    -   **Squares**: Cavalry deal only 25% damage to Line Infantry in Box Formation and take full return fire; the square's own fire is halved against everything except cavalry.
 4.  **Supply**:
     -   Earn +50 Supply per turn base.
     -   Earn +25 Supply per turn for each **Supply Node** held.

@@ -2,6 +2,8 @@
 
 Welcome to **Regiments**, a turn-based strategy game of maneuver, supply, and attrition.
 
+Before the battle, Player 1 chooses to command the **British** or the **French**; Player 2 takes the other army. The choice sets regiment names, uniforms, flags and team colours (British red, French blue); the rules are identical for both sides.
+
 ---
 
 ## 🚩 Objectives
@@ -58,10 +60,12 @@ Movement Points (MP) are consumed based on the terrain type:
 
 ## 🛡️ Special Abilities
 *   **Entrench (1 MP)**: Grants a +20% defense bonus. Removed if the unit moves.
-*   **Box Formation (1 MP)**: (Line Infantry only)
-    *   Grants 360° firing arc.
-    *   Massive defense bonus against Cavalry.
-    *   Reduces Attack and Max MP.
+*   **Box Formation (1 MP to form or disband)**: (Line Infantry only)
+    *   Grants a 360° firing arc, and the square cannot be flanked.
+    *   **Proof against cavalry**: Hussars and Chasseurs deal only **25% damage** to a square.
+    *   **Deadly to cavalry**: a square returns full fire on any cavalry that attacks it. Charging Hussars lose their usual 60% protection from return fire, and Chasseurs no longer escape return fire as skirmishers.
+    *   **Reduced firepower**: only one face can fire at anything else, so a square deals **half damage** to infantry and artillery (attacking or returning fire). It still shoots at cavalry with full strength.
+    *   **Immobile**: a square cannot move; disband it first.
     *   **Vulnerable to artillery**: Cannon fire deals **double damage** to a unit in Box Formation.
 *   **Palisades (1 MP)**: (Cannons only)
     *   Grants a significant defense bonus.

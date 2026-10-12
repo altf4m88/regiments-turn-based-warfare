@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { GameState } from '../../game/types';
+import { nationOf } from '../../game/engine';
 import { MAP_N, TILE, inMap, tileCenter } from '../core/constants';
 import { flagUniforms } from '../models/flags';
 import { ActionEvent, UnitManager } from '../units/UnitManager';
@@ -34,7 +35,8 @@ export interface BattlefieldCallbacks {
   onReady?: () => void;
 }
 
-const signature = (state: GameState) => state.map.map(r => r.map(t => t.terrain.slice(0, 3)).join('')).join('/');
+const signature = (state: GameState) =>
+  `${nationOf(state, 1)}:${nationOf(state, 2)}|` + state.map.map(r => r.map(t => t.terrain.slice(0, 3)).join('')).join('/');
 
 /**
  * Owns the WebGL renderer and the whole 3D battlefield. React feeds it game
@@ -267,7 +269,7 @@ export class Battlefield {
     this.scene.add(this.terrain);
     this.water = buildWater(this.model, this.overlay.uniforms, SUN_DIR);
     this.scene.add(this.water.mesh);
-    this.scenery = new Scenery(this.model, this.obstacles);
+    this.scenery = new Scenery(this.model, this.obstacles, { 1: nationOf(state, 1), 2: nationOf(state, 2) });
     this.scene.add(this.scenery.group);
     this.units = new UnitManager(
       this.scene,

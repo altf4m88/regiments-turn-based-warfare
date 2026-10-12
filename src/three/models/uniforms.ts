@@ -1,10 +1,9 @@
-import { TeamId } from '../core/constants';
+import { Nation } from '../../game/types';
 
 /*
- * Uniforms c. 1812–1815. Player 1 fields British regiments (Foot Guards,
- * Rifles, Royal Artillery, Royal Hussars...), player 2 French ones (Garde
- * Nationale, Voltigeurs, Hussards, Chasseurs à Cheval...), so they are dressed
- * accordingly: redcoats against the imperial blue.
+ * Uniforms c. 1812–1815, keyed by the army a player chose: British regiments
+ * (Foot Guards, Rifles, Royal Artillery, Royal Hussars...) in red, French ones
+ * (Garde Nationale, Voltigeurs, Hussards, Chasseurs à Cheval...) in imperial blue.
  */
 
 const WHITE = '#efece4';
@@ -64,8 +63,8 @@ const frVoltigeurs: FootUniform = {
   trousers: FR_BLUE, belts: WHITE, plume: CHAMOIS, headgear: 'french', pack: null,
 };
 
-export const FOOT_UNIFORMS: Record<TeamId, Record<FootKind, FootUniform>> = {
-  1: {
+export const FOOT_UNIFORMS: Record<Nation, Record<FootKind, FootUniform>> = {
+  british: {
     line: britLine,
     bearer: { ...britLine, pack: null },
     // 95th Rifles: rifle-green jackets, black facings and belts.
@@ -80,7 +79,7 @@ export const FOOT_UNIFORMS: Record<TeamId, Record<FootKind, FootUniform>> = {
     // Drummers wore "reversed colours": the regiment's facing colour as their coat.
     drummer: { ...britLine, coat: BRIT_BUFF, facing: BRIT_RED, lace: BRIT_RED, turnbacks: BRIT_RED, pack: null },
   },
-  2: {
+  french: {
     line: frLine,
     bearer: { ...frLine, pack: null },
     // Voltigeurs: blue coats with chamois collars and yellow-green plumes.
@@ -117,8 +116,8 @@ export interface RiderUniform {
   sheepskin: string | null;
 }
 
-export const RIDER_UNIFORMS: Record<TeamId, Record<RiderBody, RiderUniform>> = {
-  1: {
+export const RIDER_UNIFORMS: Record<Nation, Record<RiderBody, RiderUniform>> = {
+  british: {
     // British hussars: blue dolman and pelisse, white fur, white breeches.
     hussar: {
       coat: BRIT_NAVY, facing: WHITE, braid: GOLD, pelisse: { cloth: BRIT_NAVY, fur: WHITE },
@@ -132,7 +131,7 @@ export const RIDER_UNIFORMS: Record<TeamId, Record<RiderBody, RiderUniform>> = {
       cloth: BRIT_NAVY, clothTrim: BRIT_BUFF, sheepskin: null,
     },
   },
-  2: {
+  french: {
     // French hussars: green dolman, scarlet pelisse and breeches, yellow braid.
     hussar: {
       coat: FR_GREEN, facing: FR_RED, braid: GOLD, pelisse: { cloth: FR_RED, fur: BLACK },
@@ -148,8 +147,8 @@ export const RIDER_UNIFORMS: Record<TeamId, Record<RiderBody, RiderUniform>> = {
   },
 };
 
-/** Main coat colour per side, used for camp tents and the HQ marquee. */
-export const ARMY_COAT: Record<TeamId, string> = { 1: BRIT_RED, 2: FR_BLUE };
+/** Main coat colour per army, used for camp tents and the HQ marquee. */
+export const ARMY_COAT: Record<Nation, string> = { british: BRIT_RED, french: FR_BLUE };
 
 /** Gun carriages: British blue-grey, French Gribeauval olive. */
-export const CARRIAGE: Record<TeamId, string> = { 1: '#5b6b79', 2: '#5d6b3a' };
+export const CARRIAGE: Record<Nation, string> = { british: '#5b6b79', french: '#5d6b3a' };

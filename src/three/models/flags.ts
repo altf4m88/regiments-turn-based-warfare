@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { TeamId } from '../core/constants';
+import { Nation } from '../../game/types';
 
 const ROMAN: [number, string][] = [[10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']];
 const toRoman = (n: number) => {
@@ -12,18 +12,18 @@ const toRoman = (n: number) => {
 export const flagUniforms = { uTime: { value: 0 } };
 
 /**
- * Regimental colours drawn on a canvas: British-style colours with a union
- * canton for player 1, French 1804-pattern lozenge colours for player 2.
+ * Regimental colours drawn on a canvas: British colours with a union canton,
+ * or French 1804-pattern lozenge colours.
  * The field uses the regiment's own `standardColor` from the game state.
  */
-export const makeFlagTexture = (team: TeamId, field: string, number: number, guidon = false) => {
+export const makeFlagTexture = (nation: Nation, field: string, number: number, guidon = false) => {
   const w = 128, h = 88;
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
   const g = c.getContext('2d')!;
   g.fillStyle = field;
   g.fillRect(0, 0, w, h);
-  if (team === 1) {
+  if (nation === 'british') {
     const cw = 56, ch = 40;
     g.save();
     g.beginPath(); g.rect(0, 0, cw, ch); g.clip();
@@ -120,19 +120,19 @@ export const disposeFlagMesh = (m: THREE.Mesh) => {
   mat.dispose();
 };
 
-/** Plain ownership banners for command centres, depots and the capture point. */
-export const makeBannerTexture = (owner: number) => {
+/** Plain ownership banners for command centres, depots and the capture point (null = unclaimed). */
+export const makeBannerTexture = (nation: Nation | null) => {
   const w = 128, h = 84;
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
   const g = c.getContext('2d')!;
-  if (owner === 1) {
+  if (nation === 'british') {
     g.fillStyle = '#22408a'; g.fillRect(0, 0, w, h);
     g.strokeStyle = '#f2f0ea'; g.lineWidth = 12;
     g.beginPath(); g.moveTo(0, 0); g.lineTo(w, h); g.moveTo(w, 0); g.lineTo(0, h); g.stroke();
     g.fillStyle = '#f2f0ea'; g.fillRect(w / 2 - 10, 0, 20, h); g.fillRect(0, h / 2 - 10, w, 20);
     g.fillStyle = '#c8102e'; g.fillRect(w / 2 - 5, 0, 10, h); g.fillRect(0, h / 2 - 5, w, 10);
-  } else if (owner === 2) {
+  } else if (nation === 'french') {
     g.fillStyle = '#1f3a8f'; g.fillRect(0, 0, w / 3, h);
     g.fillStyle = '#f4f1e8'; g.fillRect(w / 3, 0, w / 3, h);
     g.fillStyle = '#c8102e'; g.fillRect((2 * w) / 3, 0, w / 3 + 1, h);
@@ -142,7 +142,7 @@ export const makeBannerTexture = (owner: number) => {
     g.fillStyle = '#e9e5d9'; g.fillRect(0, 0, w, h);
     g.strokeStyle = '#9b968a'; g.lineWidth = 6; g.strokeRect(3, 3, w - 6, h - 6);
   }
-  if (owner !== 0) {
+  if (nation) {
     g.strokeStyle = '#d9b44a'; g.lineWidth = 5; g.strokeRect(2.5, 2.5, w - 5, h - 5);
   }
   const tex = new THREE.CanvasTexture(c);

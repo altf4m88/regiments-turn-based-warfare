@@ -8,7 +8,7 @@ The battle now plays out on a fully 3D field (toggle **3D / 2D** in the header; 
 
 **The map.** The 20×20 tile map becomes a continuous landscape with rolling hills, wooded copses, villages with churches and garden walls, a river that winds across the field (stone bridges wherever the road crosses it), and dirt roads lined with poplars beyond the battlefield. Each army's headquarters (a manor, tents, an artillery park and horse lines) sits behind its command centre. Supply depots have wagons and crates and fly their owner's banner. At the capture point, one brazier is lit for every turn it has been held.
 
-**The regiments.** Napoleonic miniatures, about half a unit tall, in period uniforms. Player 1's British regiments wear red coats, with rifle-green Rifles and blue Royal Artillery and hussars. Player 2's French regiments wear imperial blue, with chamois-collared voltigeurs and green hussars and chasseurs à cheval.
+**The regiments.** Napoleonic miniatures, about half a unit tall, in period uniforms. On the start screen Player 1 chooses to command the British or the French, and Player 2 takes the other army. British regiments wear red coats, with rifle-green Rifles and blue Royal Artillery and hussars. French regiments wear imperial blue, with chamois-collared voltigeurs and green hussars and chasseurs à cheval. Team colours across the 2D and 3D views follow the army: British red, French blue.
 - Line infantry stand in three ranks with their colours (painted with each regiment's own `standardColor`), an officer and a drummer.
 - Light infantry deploy in a loose skirmish chain.
 - Gunners crew their field pieces.

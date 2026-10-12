@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GeoBuilder, V3 } from '../core/GeoBuilder';
-import { TeamId } from '../core/constants';
+import { Nation } from '../../game/types';
 import { CARRIAGE, FOOT_UNIFORMS, FootKind, FootUniform, RIDER_UNIFORMS, RiderBody, RiderUniform } from './uniforms';
 
 export type { FootKind, RiderBody } from './uniforms';
@@ -37,8 +37,8 @@ export const GUIDON_ANCHOR = new THREE.Vector3(0.085, 0.92, 0.07);
 
 export type RiderKind = RiderBody | 'guidon';
 
-const foot = (kind: FootKind, t: TeamId) => FOOT_UNIFORMS[t][kind];
-const rider = (body: RiderBody, t: TeamId) => RIDER_UNIFORMS[t][body];
+const foot = (kind: FootKind, n: Nation) => FOOT_UNIFORMS[n][kind];
+const rider = (body: RiderBody, n: Nation) => RIDER_UNIFORMS[n][body];
 
 // ---------------------------------------------------------------------------
 // Headgear (y0 = bottom of the hat; 0.428 for a standing man)
@@ -83,17 +83,17 @@ const stovepipe = (b: GeoBuilder, plume: string, y0: number) => {
   b.ball(0.016, plume, { p: [0, y0 + h + 0.01, 0.026] }, 0);
 };
 
-const bicorne = (b: GeoBuilder, t: TeamId, y0: number) => {
+const bicorne = (b: GeoBuilder, n: Nation, y0: number) => {
   const bic = new THREE.CylinderGeometry(0.058, 0.058, 0.026, 12, 1, false, -Math.PI / 2, Math.PI);
   b.add(bic, BLACK, { p: [0, y0 + 0.004, 0], r: [-Math.PI / 2, 0, 0] });
   // British black cockade with a white-over-red plume; French tricolour cockade.
-  b.ball(0.011, t === 1 ? BLACK : '#2a3f9a', { p: [-0.03, y0 + 0.042, 0.012] }, 0);
-  b.box(0.012, 0.05, 0.012, t === 1 ? WHITE : '#c8102e', { p: [-0.03, y0 + 0.072, 0.012] });
+  b.ball(0.011, n === 'british' ? BLACK : '#2a3f9a', { p: [-0.03, y0 + 0.042, 0.012] }, 0);
+  b.box(0.012, 0.05, 0.012, n === 'british' ? WHITE : '#c8102e', { p: [-0.03, y0 + 0.072, 0.012] });
 };
 
-const hat = (b: GeoBuilder, u: FootUniform, t: TeamId, kind: FootKind) => {
+const hat = (b: GeoBuilder, u: FootUniform, n: Nation, kind: FootKind) => {
   const y0 = 0.428;
-  if (u.headgear === 'bicorne') bicorne(b, t, y0);
+  if (u.headgear === 'bicorne') bicorne(b, n, y0);
   else if (u.headgear === 'belgic') belgicShako(b, u.plume, y0);
   else if (u.headgear === 'stovepipe') stovepipe(b, u.plume, y0);
   else frenchShako(b, u.plume, y0, kind === 'light' || kind === 'gunner');
@@ -138,12 +138,12 @@ const backpack = (b: GeoBuilder, pack: { body: string; roll: string }) => {
   b.box(0.042, 0.03, 0.026, BLACK, { p: [0.045, 0.205, -0.045] }); // cartridge box
 };
 
-export const buildFootBody = (kind: FootKind, t: TeamId) => {
-  const u = foot(kind, t);
+export const buildFootBody = (kind: FootKind, n: Nation) => {
+  const u = foot(kind, n);
   const b = new GeoBuilder();
   head(b);
   torso(b, u);
-  hat(b, u, t, kind);
+  hat(b, u, n, kind);
   if (u.pack) backpack(b, u.pack);
   switch (kind) {
     case 'line':
@@ -156,7 +156,7 @@ export const buildFootBody = (kind: FootKind, t: TeamId) => {
       break;
     case 'gunner':
       crossbelts(b, u.belts, false);
-      if (t === 2) {
+      if (n === 'french') {
         b.box(0.036, 0.016, 0.064, u.facing, { p: [-0.07, 0.36, 0] }); // red epaulettes
         b.box(0.036, 0.016, 0.064, u.facing, { p: [0.07, 0.36, 0] });
       }
@@ -165,13 +165,13 @@ export const buildFootBody = (kind: FootKind, t: TeamId) => {
     case 'lightOfficer':
       b.box(0.036, 0.014, 0.064, GOLD, { p: [-0.07, 0.36, 0] }); // epaulettes
       b.box(0.036, 0.014, 0.064, GOLD, { p: [0.07, 0.36, 0] });
-      if (t === 1) b.box(0.125, 0.026, 0.078, '#9c1b2a', { p: [0, 0.215, 0] }); // crimson sash
+      if (n === 'british') b.box(0.125, 0.026, 0.078, '#9c1b2a', { p: [0, 0.215, 0] }); // crimson sash
       else b.box(0.04, 0.022, 0.008, GOLD, { p: [0, 0.345, 0.04] }); // gorget
       b.box(0.012, 0.13, 0.008, STEEL, { p: [-0.07, 0.17, -0.02], r: [0.35, 0, 0.1] }); // scabbard
       break;
     case 'drummer':
       for (let i = 0; i < 4; i++) b.box(0.124, 0.006, 0.076, u.lace ?? GOLD, { p: [0, 0.23 + i * 0.035, 0] });
-      b.add(new THREE.CylinderGeometry(0.042, 0.042, 0.05, 12), t === 1 ? WHITE : '#b8892e', { p: [-0.035, 0.235, 0.075], r: [0.35, 0, 0.15] });
+      b.add(new THREE.CylinderGeometry(0.042, 0.042, 0.05, 12), n === 'british' ? WHITE : '#b8892e', { p: [-0.035, 0.235, 0.075], r: [0.35, 0, 0.15] });
       b.add(new THREE.CylinderGeometry(0.044, 0.044, 0.01, 12), u.facing, { p: [-0.035, 0.258, 0.083], r: [0.35, 0, 0.15] });
       b.add(new THREE.CylinderGeometry(0.044, 0.044, 0.01, 12), u.facing, { p: [-0.035, 0.212, 0.067], r: [0.35, 0, 0.15] });
       b.box(0.012, 0.2, 0.005, u.belts, { p: [0, 0.3, 0.042], r: [0, 0, -0.62] });
@@ -195,8 +195,8 @@ export const buildLeg = (trousers: string, gaiterHeight = 0.055) => {
 };
 
 /** French infantry wore knee-length black gaiters; British half-gaiters under grey trousers. */
-export const buildFootLeg = (kind: FootKind, t: TeamId) =>
-  buildLeg(foot(kind, t).trousers, t === 2 && kind !== 'light' ? 0.095 : 0.055);
+export const buildFootLeg = (kind: FootKind, n: Nation) =>
+  buildLeg(foot(kind, n).trousers, n === 'french' && kind !== 'light' ? 0.095 : 0.055);
 
 const musket = (b: GeoBuilder, butt: V3, muzzle: V3, bayonet = true) => {
   const dir = new THREE.Vector3(muzzle[0] - butt[0], muzzle[1] - butt[1], muzzle[2] - butt[2]);
@@ -224,8 +224,8 @@ const R_SH: V3 = [0.076, SHOULDER_Y, 0];
 
 export type FootPose = 'carry' | 'aim' | 'up' | 'down' | 'hold' | 'beat';
 
-export const buildFootArms = (kind: FootKind, pose: FootPose, t: TeamId) => {
-  const u = foot(kind, t);
+export const buildFootArms = (kind: FootKind, pose: FootPose, n: Nation) => {
+  const u = foot(kind, n);
   const sleeve = u.coat;
   const cuff = u.facing;
   const b = new GeoBuilder();
@@ -297,9 +297,9 @@ export const HORSE_LEGS: { x: number; z: number; front: boolean }[] = [
 ];
 export const HORSE_LEG_TOP = 0.27;
 
-export const buildHorseBody = (variant: number, t: TeamId, body: RiderBody) => {
+export const buildHorseBody = (variant: number, n: Nation, body: RiderBody) => {
   const H = HORSE_COATS[variant % HORSE_COATS.length];
-  const u = rider(body, t);
+  const u = rider(body, n);
   const b = new GeoBuilder();
   b.ball(1, H.coat, { p: [0, 0.3, -0.005], s: [0.083, 0.086, 0.17] });
   b.ball(1, H.coat, { p: [0, 0.31, 0.115], s: [0.075, 0.088, 0.085] });
@@ -349,8 +349,8 @@ const riderHat = (b: GeoBuilder, u: RiderUniform) => {
   b.box(0.012, 0.075, 0.012, u.plume, { p: [-0.03, y0 + h + 0.03, 0.01] });
 };
 
-export const buildRider = (body: RiderBody, t: TeamId) => {
-  const u = rider(body, t);
+export const buildRider = (body: RiderBody, n: Nation) => {
+  const u = rider(body, n);
   const b = new GeoBuilder();
   for (const s of [-1, 1]) {
     b.limb([s * 0.045, 0.405, -0.02], [s * 0.088, 0.37, 0.07], 0.042, 0.046, u.breeches, 0.01);
@@ -364,8 +364,8 @@ export const buildRider = (body: RiderBody, t: TeamId) => {
     for (let i = 0; i < 5; i++) b.box(0.08, 0.006, 0.006, u.braid, { p: [0, 0.43 + i * 0.024, 0.037] });
   } else {
     // Plastron front (British light dragoons) / pointed lapels (French chasseurs).
-    b.box(0.058, 0.11, 0.006, t === 1 ? u.facing : u.coat, { p: [0, 0.485, 0.036] });
-    if (t === 2) b.box(0.006, 0.11, 0.007, u.facing, { p: [0, 0.485, 0.038] });
+    b.box(0.058, 0.11, 0.006, n === 'british' ? u.facing : u.coat, { p: [0, 0.485, 0.036] });
+    if (n === 'french') b.box(0.006, 0.11, 0.007, u.facing, { p: [0, 0.485, 0.038] });
   }
   if (u.pelisse) {
     b.box(0.07, 0.12, 0.085, u.pelisse.cloth, { p: [-0.065, 0.49, -0.01], r: [0, 0, 0.12] });
@@ -386,8 +386,8 @@ export const buildRider = (body: RiderBody, t: TeamId) => {
 export type RiderPose = 'rest' | 'charge' | 'aim' | 'carry';
 
 /** Sword / carbine / guidon arm; `body` picks the regiment's uniform. */
-export const buildRiderArm = (kind: RiderKind, pose: RiderPose, t: TeamId, body: RiderBody) => {
-  const u = rider(body, t);
+export const buildRiderArm = (kind: RiderKind, pose: RiderPose, n: Nation, body: RiderBody) => {
+  const u = rider(body, n);
   const coat = u.coat;
   const cuff = u.facing;
   const b = new GeoBuilder();
@@ -427,9 +427,9 @@ export const buildRiderArm = (kind: RiderKind, pose: RiderPose, t: TeamId, body:
 export const WHEEL_R = 0.12;
 export const WHEEL_X = 0.112;
 
-export const buildGun = (t: TeamId) => {
+export const buildGun = (n: Nation) => {
   const b = new GeoBuilder();
-  const c = CARRIAGE[t];
+  const c = CARRIAGE[n];
   b.box(0.062, 0.05, 0.43, c, { p: [0, 0.07, -0.17], r: [-0.25, 0, 0] }); // trail
   b.box(0.016, 0.065, 0.17, c, { p: [-0.042, 0.15, -0.005] }); // cheeks
   b.box(0.016, 0.065, 0.17, c, { p: [0.042, 0.15, -0.005] });
@@ -448,8 +448,8 @@ export const buildGun = (t: TeamId) => {
   return b.build();
 };
 
-export const buildWheel = (t: TeamId) => {
-  const c = CARRIAGE[t];
+export const buildWheel = (n: Nation) => {
+  const c = CARRIAGE[n];
   const b = new GeoBuilder();
   b.add(new THREE.TorusGeometry(WHEEL_R - 0.006, 0.01, 4, 18), IRON, { r: [0, Math.PI / 2, 0] });
   b.add(new THREE.TorusGeometry(WHEEL_R - 0.018, 0.009, 4, 18), c, { r: [0, Math.PI / 2, 0] });

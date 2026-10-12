@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
-import { Regiment, UnitType } from '../../game/types';
-import { TEAM, TILE, TeamId, WATER_LEVEL, angleDelta, clamp, facingToHeading, smoothstep } from '../core/constants';
+import { Nation, Regiment, UnitType } from '../../game/types';
+import { NATION_CSS, TILE, WATER_LEVEL, angleDelta, clamp, facingToHeading, smoothstep } from '../core/constants';
 import { hashString } from '../core/noise';
 import {
   FLAG_ANCHOR, FootKind, FootPose, GUIDON_ANCHOR, HIP_Y, HORSE_LEGS, HORSE_LEG_TOP, LEG_X, MUZZLE, RIDER_SHOULDER, RiderPose,
@@ -131,7 +131,7 @@ export class RegimentVisual {
   data: Regiment;
   readonly id: string;
   readonly type: UnitType;
-  readonly team: TeamId;
+  readonly nation: Nation;
   readonly anchor = new THREE.Vector2();
   heading: number;
   readonly figures: Figure[] = [];
@@ -162,11 +162,11 @@ export class RegimentVisual {
   private destroyedAt = 0;
   private now = 0;
 
-  constructor(private ctx: UnitContext, data: Regiment, opts: { spawnFrom?: { x: number; z: number } } = {}) {
+  constructor(private ctx: UnitContext, data: Regiment, opts: { nation: Nation; spawnFrom?: { x: number; z: number } }) {
     this.data = data;
     this.id = data.id;
     this.type = data.type;
-    this.team = (data.owner === 2 ? 2 : 1) as TeamId;
+    this.nation = opts.nation;
     this.seed = hashString(data.id);
     this.anchor.set((data.x + 0.5) * TILE, (data.y + 0.5) * TILE);
     this.prevAnchor.copy(this.anchor);
@@ -191,7 +191,7 @@ export class RegimentVisual {
     }
 
     this.labelEl = document.createElement('div');
-    this.labelEl.className = `rg-label t${this.team}`;
+    this.labelEl.className = 'rg-label';
     this.labelEl.addEventListener('pointerdown', e => e.stopPropagation());
     this.labelEl.addEventListener('click', e => {
       e.stopPropagation();
@@ -205,7 +205,7 @@ export class RegimentVisual {
     if (data.type === 'line_infantry' || data.type === 'hussars' || data.type === 'chasseurs') {
       const num = parseInt(data.name, 10) || 1;
       const guidon = data.type !== 'line_infantry';
-      const tex = makeFlagTexture(this.team, data.standardColor, num, guidon);
+      const tex = makeFlagTexture(this.nation, data.standardColor, num, guidon);
       this.flag = guidon ? makeFlagMesh(tex, 0.2, 0.14, true) : makeFlagMesh(tex, 0.3, 0.21);
       ctx.group.add(this.flag);
     }
@@ -426,7 +426,7 @@ export class RegimentVisual {
    * Plays this regiment's attack on a target point and returns the sim time at
    * which the damage lands (so casualties drop when the shot arrives).
    */
-  attack(target: THREE.Vector3, now: number, delay = 0): number {
+  attack(target: THREE.Vector3, now: number, delay = 0, opts: { intoSquare?: boolean } = {}): number {
     const t0 = now + delay;
     const me = this.pos3();
     const dx = target.x - me.x, dz = target.z - me.z;
@@ -437,7 +437,8 @@ export class RegimentVisual {
     if (this.type === 'hussars') {
       this.aimHeading = toward;
       this.aimUntil = t0 + 3.2;
-      const reach = Math.max(0, dist - 0.75);
+      // Horses balk at a hedge of bayonets: against a square the charge pulls up short.
+      const reach = Math.max(0, dist - (opts.intoSquare ? 1.2 : 0.75));
       const dur = 0.35 + reach / 3.6;
       this.charge = { start: t0 + 0.15, contact: t0 + 0.15 + dur, hold: 0.55, back: 1.3, dx: fx * reach, dz: fz * reach, target: target.clone() };
       for (const f of this.figures) if (f.rider) f.poseUntil = t0 + 0.15 + dur + 0.55;
@@ -727,17 +728,17 @@ export class RegimentVisual {
 
   private emit(f: Figure, now: number, sink?: (b: Batch, m: THREE.Matrix4) => void) {
     const B = this.ctx.batches;
-    const team = this.team;
+    const nation = this.nation;
     const push = sink ?? ((b: Batch, m: THREE.Matrix4) => b.push(m));
     const root = this.figureMatrix(f, _m, now);
     const amp = f.dying ? 0 : clamp(f.speed / (f.rider ? 1.4 : 0.45), 0, 1);
 
     if (f.gun) {
-      push(B.get(`gb:${team}`, () => buildGun(team), 16), root);
+      push(B.get(`gb:${nation}`, () => buildGun(nation), 16), root);
       for (const s of [-1, 1]) {
         _m2.makeRotationX(f.wheel);
         _m2.setPosition(s * WHEEL_X, WHEEL_R, 0);
-        push(B.get(`gw:${team}`, () => buildWheel(team), 32), _m3.multiplyMatrices(root, _m2));
+        push(B.get(`gw:${nation}`, () => buildWheel(nation), 32), _m3.multiplyMatrices(root, _m2));
       }
       return;
     }
@@ -745,7 +746,7 @@ export class RegimentVisual {
     if (f.rider) {
       const v = f.horse;
       const rk = f.rider;
-      push(B.get(`hb:${v}:${team}:${rk}`, () => buildHorseBody(v, team, rk), 32), root);
+      push(B.get(`hb:${v}:${nation}:${rk}`, () => buildHorseBody(v, nation, rk), 32), root);
       const gallop = amp > 0.55;
       HORSE_LEGS.forEach((leg, i) => {
         const off = leg.front ? (i % 2) * 0.5 : Math.PI + (i % 2) * 0.5;
@@ -754,13 +755,13 @@ export class RegimentVisual {
         _m2.setPosition(leg.x, HORSE_LEG_TOP, leg.z);
         push(B.get(`hl:${v}`, () => buildHorseLeg(v), 128), _m3.multiplyMatrices(root, _m2));
       });
-      push(B.get(`rb:${rk}:${team}`, () => buildRider(rk, team), 32), root);
+      push(B.get(`rb:${rk}:${nation}`, () => buildRider(rk, nation), 32), root);
       let pose: RiderPose = 'rest';
       let armKind: 'hussar' | 'chasseur' | 'guidon' = rk;
       if (f.role === 'guidon') { armKind = 'guidon'; pose = 'carry'; }
       else if (rk === 'hussar') pose = now < f.poseUntil ? 'charge' : 'rest';
       else pose = f.aimFrom >= 0 && now >= f.aimFrom && now <= f.aimTo ? 'aim' : 'rest';
-      const armBatch = B.get(`ra:${armKind}:${pose}:${team}:${rk}`, () => buildRiderArm(armKind, pose, team, rk), 32);
+      const armBatch = B.get(`ra:${armKind}:${pose}:${nation}:${rk}`, () => buildRiderArm(armKind, pose, nation, rk), 32);
       if (f.slashAt >= 0 && now >= f.slashAt && now < f.slashAt + 0.45 && !f.dying) {
         const t = (now - f.slashAt) / 0.45;
         const ang = Math.sin(t * Math.PI) * 1.7;
@@ -775,15 +776,15 @@ export class RegimentVisual {
     }
 
     const kind = f.foot!;
-    push(B.get(`fb:${kind}:${team}`, () => buildFootBody(kind, team), kind === 'line' ? 192 : 48), root);
+    push(B.get(`fb:${kind}:${nation}`, () => buildFootBody(kind, nation), kind === 'line' ? 192 : 48), root);
     const swing = f.dying ? 0 : Math.sin(f.phase) * 0.55 * amp;
     for (const s of [-1, 1]) {
       _m2.makeRotationX(swing * s);
       _m2.setPosition(s * LEG_X, HIP_Y, 0);
-      push(B.get(`fl:${kind}:${team}`, () => buildFootLeg(kind, team), kind === 'line' ? 384 : 96), _m3.multiplyMatrices(root, _m2));
+      push(B.get(`fl:${kind}:${nation}`, () => buildFootLeg(kind, nation), kind === 'line' ? 384 : 96), _m3.multiplyMatrices(root, _m2));
     }
     const pose = this.footPose(f, now);
-    const armBatch = B.get(`fa:${kind}:${pose}:${team}`, () => buildFootArms(kind, pose, team), kind === 'line' ? 192 : 48);
+    const armBatch = B.get(`fa:${kind}:${pose}:${nation}`, () => buildFootArms(kind, pose, nation), kind === 'line' ? 192 : 48);
     if (kind === 'drummer' && !f.dying) {
       const beat = Math.sin(now * (amp > 0.2 ? 14 : 4) + f.rnd * 6) * (amp > 0.2 ? 0.12 : 0.03);
       _m2.makeTranslation(0, 0.3, 0);
@@ -869,8 +870,8 @@ export class RegimentVisual {
     const pct = Math.round((d.men / d.maxMen) * 100);
     const status = [d.isEntrenched ? '⛨' : '', d.isBoxFormation ? '◻' : '', d.isPalisaded ? '⋔' : ''].join('');
     const mp = Math.max(0, Math.round(d.mp * 2) / 2);
-    this.labelEl.className = `rg-label t${this.team}${this.selected ? ' sel' : ''}${this.hovered ? ' hov' : ''}${spent ? ' spent' : ''}${this.destroyed ? ' dead' : ''}`;
-    this.labelEl.style.setProperty('--team', TEAM[this.team].css);
+    this.labelEl.className = `rg-label${this.selected ? ' sel' : ''}${this.hovered ? ' hov' : ''}${spent ? ' spent' : ''}${this.destroyed ? ' dead' : ''}`;
+    this.labelEl.style.setProperty('--team', NATION_CSS[this.nation]);
     this.labelEl.innerHTML = this.destroyed
       ? `<div class="rg-row"><span class="rg-id">${d.id}</span><span class="rg-st">routed</span></div>`
       : `<div class="rg-row"><span class="rg-ico">${GLYPH[d.type]}</span>${idHtml(d.id)}${status ? `<span class="rg-st">${status}</span>` : ''}</div>` +

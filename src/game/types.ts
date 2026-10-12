@@ -1,4 +1,7 @@
 export type UnitType = 'line_infantry' | 'light_infantry' | 'cannon' | 'hussars' | 'chasseurs';
+
+/** The army a player commands; decides regiment names, uniforms, colours and flags. */
+export type Nation = 'british' | 'french';
 export type Facing = 'north' | 'south' | 'east' | 'west';
 
 export interface Regiment {
@@ -77,4 +80,5 @@ export interface GameState {
   gameMode: 'manual' | 'ai' | null;
   aiConfigs: { [key: number]: AiConfig };
   monologueHistory: MonologueEntry[];
+  nations: { [player: number]: Nation };
 }
