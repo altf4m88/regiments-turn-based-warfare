@@ -116,7 +116,7 @@ export const paintOverlay = (
 
   let reach: Reach | null = null;
   let cache = reachCache;
-  if (mine && sel.mp > 0 && !sel.isBoxFormation && !sel.isPalisaded) {
+  if (mine && sel.mp > 0 && !sel.isBoxFormation && !sel.isPalisaded && !sel.isEntrenched) {
     const sig = `${sel.x},${sel.y},${sel.mp},${state.regiments.map(r => `${r.id}${r.x}.${r.y}`).join('|')}`;
     if (cache && cache.id === sel.id && cache.sig === sig) reach = cache.reach;
     else {

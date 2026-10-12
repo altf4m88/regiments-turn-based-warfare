@@ -36,6 +36,7 @@ import {
   Terminal,
   Settings,
   Cpu,
+  Minus,
   X,
   Box,
   LayoutGrid
@@ -48,6 +49,7 @@ import { Regiment, Tile, GameState, UnitType, Facing, GameAnimation, AiConfig, A
 import { getInitialState, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath, resolveAttack, NATIONS, nationOf, nationsFor } from './game/engine';
 import { AI_MODELS, AI_PROVIDERS, THINKING_LEVELS, resolveAiModel } from './ai/models';
 import { AiSession, startAiSession } from './ai/session';
+import { Markdown, plainText } from './ui/Markdown';
 
 // The 3D battlefield (three.js) is code-split so the 2D view stays light.
 const BattlefieldView = lazy(() => import('./three/BattlefieldView'));
@@ -426,6 +428,14 @@ export default function App() {
   const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(true);
   const [isAiThinking, setIsAiThinking] = useState(false);
   const [aiMonologue, setAiMonologue] = useState<string | null>(null);
+  const [dispatchExpanded, setDispatchExpanded] = useState(false);
+  const [dispatchMinimized, setDispatchMinimized] = useState(() => {
+    try {
+      return localStorage.getItem('regiments.dispatch') === 'minimized';
+    } catch {
+      return false;
+    }
+  });
   const [aiInstructions, setAiInstructions] = useState<string>('');
   const [showAiConfig, setShowAiConfig] = useState(false);
   const [isArchiveOpen, setIsArchiveOpen] = useState(false);
@@ -445,6 +455,17 @@ export default function App() {
   });
   const aiTurnRef = useRef<{ turn: number, player: number } | null>(null);
   const side = (player: number) => SIDE_UI[nationOf(gameState, player)];
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('regiments.dispatch', dispatchMinimized ? 'minimized' : 'open');
+    } catch {
+      /* storage unavailable */
+    }
+  }, [dispatchMinimized]);
+
+  // Each new dispatch starts as a short preview.
+  useEffect(() => setDispatchExpanded(false), [aiMonologue]);
 
   useEffect(() => {
     try {
@@ -573,6 +594,10 @@ export default function App() {
           addBattlefieldLog("Line Infantry cannot move while in Box Formation!");
           return;
         }
+        if (selectedUnit.isEntrenched) {
+          addBattlefieldLog("Entrenched troops must leave their earthworks before they can move!");
+          return;
+        }
         const dist = Math.max(Math.abs(selectedUnit.x - x), Math.abs(selectedUnit.y - y));
         const tile = gameState.map[y][x];
         const cost = getTerrainMpCost(tile.terrain);
@@ -602,7 +627,7 @@ export default function App() {
     if (!gameState.winner && selectedUnit && selectedUnit.owner === gameState.currentPlayer) {
       const occupied = gameState.regiments.some(r => r.x === x && r.y === y);
       const dist = Math.max(Math.abs(selectedUnit.x - x), Math.abs(selectedUnit.y - y));
-      if (!occupied && dist > 1 && !selectedUnit.isBoxFormation && !selectedUnit.isPalisaded) {
+      if (!occupied && dist > 1 && !selectedUnit.isBoxFormation && !selectedUnit.isPalisaded && !selectedUnit.isEntrenched) {
         const route = findPath({ x: selectedUnit.x, y: selectedUnit.y }, { x, y }, selectedUnit, gameState.regiments, gameState.map);
         if (route && route.cost <= selectedUnit.mp) {
           executeCommand(`mv ${selectedUnit.id} ${x}:${y}`);
@@ -616,6 +641,10 @@ export default function App() {
   const performMove = (unit: Regiment, x: number, y: number, cost: number) => {
     if (unit.isPalisaded) {
       addBattlefieldLog(`[${unit.id}] ${unit.name} cannot move while palisaded!`);
+      return;
+    }
+    if (unit.isEntrenched) {
+      addBattlefieldLog(`[${unit.id}] ${unit.name} must leave its earthworks before it can move!`);
       return;
     }
     let newFacing = unit.facing;
@@ -755,7 +784,20 @@ export default function App() {
   };
 
   const handleEntrench = () => {
-    if (!selectedUnit || selectedUnit.owner !== gameState.currentPlayer || selectedUnit.mp < 1 || selectedUnit.isEntrenched) return;
+    if (!selectedUnit || selectedUnit.owner !== gameState.currentPlayer || selectedUnit.mp < 1) return;
+    if (selectedUnit.isEntrenched) {
+      // Leaving the earthworks costs 1 MP; the regiment can march on with what is left.
+      setGameState(prev => ({
+        ...prev,
+        regiments: prev.regiments.map(r => r.id === selectedUnit.id ? { ...r, isEntrenched: false, mp: r.mp - 1 } : r)
+      }));
+      addBattlefieldLog(`[${selectedUnit.id}] ${selectedUnit.name} has left its earthworks.`);
+      return;
+    }
+    if (gameState.map[selectedUnit.y][selectedUnit.x].terrain === 'capture_point') {
+      addBattlefieldLog("Cannot entrench on the Strategic Point.");
+      return;
+    }
 
     setGameState(prev => ({
       ...prev,
@@ -1074,6 +1116,7 @@ export default function App() {
           
           if (unit.isPalisaded) { error = "Unit is palisaded."; break; }
           if (unit.isBoxFormation) { error = "Unit is in box formation."; break; }
+          if (unit.isEntrenched) { error = "Unit is entrenched. Leave the earthworks first with 'ent' (1 MP)."; break; }
 
           const pathResult = findPath({ x: unit.x, y: unit.y }, { x, y }, unit, currentState.regiments, currentState.map);
           if (!pathResult) { error = "No valid path found."; break; }
@@ -1189,7 +1232,15 @@ export default function App() {
         }
         case 'ent': {
           const tile = currentState.map[unit.y][unit.x];
-          if (unit.mp < 1 || unit.isEntrenched || tile.terrain === 'capture_point') { 
+          if (unit.isEntrenched) {
+            // Leaving the earthworks costs 1 MP; the regiment can march on with what is left.
+            if (unit.mp < 1) { error = "Leaving the earthworks costs 1 MP."; break; }
+            currentState.regiments = currentState.regiments.map(r => r.id === unit.id ? { ...r, isEntrenched: false, mp: r.mp - 1 } : r);
+            localAddBattlefieldLog(`[${unit.id}] left its earthworks.`);
+            localAddCliOutput(`[${unit.id}] left its earthworks.`);
+            break;
+          }
+          if (unit.mp < 1 || tile.terrain === 'capture_point') { 
             error = tile.terrain === 'capture_point' ? "Cannot entrench on Strategic Point." : "Cannot entrench."; 
             break; 
           }
@@ -1732,6 +1783,15 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
             )}>
               Player {gameState.currentPlayer}
             </p>
+            {gameState.gameMode === 'ai' && (() => {
+              const ai = resolveAiModel(gameState.aiConfigs[gameState.currentPlayer]);
+              const model = AI_MODELS[ai.provider].find(m => m.id === ai.model)?.label.replace(/ \(.*\)$/, '') ?? ai.model;
+              return (
+                <p className="text-[9px] uppercase font-mono tracking-wider opacity-60 flex items-center justify-end gap-1 whitespace-nowrap">
+                  <Cpu size={10} /> {model} · {ai.thinkingLevel}
+                </p>
+              );
+            })()}
           </div>
           <button 
             onClick={resetGame}
@@ -1743,26 +1803,59 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
       </header>
 
       <main className="flex-1 flex overflow-hidden relative">
-        {/* AI Monologue Bubble */}
+        {/* With the HUD column hidden, the AI general's dispatch floats as a compact card in the
+            map's top-right corner: three lines by default, expandable, or minimised to a tab. */}
         <AnimatePresence>
-          {aiMonologue && (
-            <motion.div
-              initial={{ opacity: 0, x: 20, scale: 0.9 }}
-              animate={{ opacity: 1, x: 0, scale: 1 }}
-              exit={{ opacity: 0, x: 10, scale: 0.9 }}
+          {aiMonologue && !isRightSidebarOpen && (dispatchMinimized ? (
+            <motion.button
+              key="dispatch-tab"
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              onClick={() => setDispatchMinimized(false)}
               className={cn(
-                "absolute z-[60] bottom-8 transition-all duration-300 max-w-[500px] w-full px-6 py-4 border-2 border-[#141414] shadow-2xl font-serif italic text-sm leading-relaxed bg-white",
-                isRightSidebarOpen ? "right-[280px]" : "right-8",
+                "absolute z-[60] top-4 px-3 py-2 border-2 bg-white/90 backdrop-blur-sm shadow-lg flex items-center gap-2 font-bold uppercase text-[9px] tracking-wider",
+                "right-4",
+                side(gameState.currentPlayer).bubble
+              )}
+              aria-label="Show the AI general's dispatch"
+            >
+              <Cpu size={12} /> General {gameState.currentPlayer}'s dispatch
+              <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+            </motion.button>
+          ) : (
+            <motion.div
+              key="dispatch"
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              className={cn(
+                "absolute z-[60] top-4 w-[min(380px,calc(100%-2rem))] border-2 bg-white/90 backdrop-blur-sm shadow-xl",
+                "right-4",
                 side(gameState.currentPlayer).bubble
               )}
             >
-              <div className="absolute -top-2 right-8 w-4 h-4 bg-white border-l-2 border-t-2 border-inherit rotate-45" />
-              <p className="relative z-10">"{aiMonologue}"</p>
-              <div className="mt-3 flex items-center justify-end gap-2 not-italic font-sans font-bold uppercase text-[9px] opacity-40">
-                <Cpu size={10} /> AI General {gameState.currentPlayer} Strategic Insight
+              <div className="flex items-center justify-between gap-2 px-4 pt-3 font-bold uppercase text-[9px] tracking-wider opacity-60">
+                <span className="flex items-center gap-2"><Cpu size={10} /> AI General {gameState.currentPlayer} · Dispatch</span>
+                <button onClick={() => setDispatchMinimized(true)} className="p-0.5 hover:opacity-100" aria-label="Minimise the dispatch">
+                  <Minus size={12} />
+                </button>
               </div>
+              {dispatchExpanded ? (
+                <Markdown text={aiMonologue} className="px-4 pt-1 max-h-[40vh] overflow-y-auto space-y-1.5 font-serif italic text-xs leading-relaxed" />
+              ) : (
+                <p className="px-4 pt-1 font-serif italic text-xs leading-relaxed line-clamp-3">{plainText(aiMonologue)}</p>
+              )}
+              {aiMonologue.length > 180 ? (
+                <button
+                  onClick={() => setDispatchExpanded(v => !v)}
+                  className="px-4 pt-1 pb-3 font-bold uppercase text-[9px] tracking-wider opacity-60 hover:opacity-100"
+                >
+                  {dispatchExpanded ? 'Show less' : 'Read full dispatch'}
+                </button>
+              ) : <div className="pb-3" />}
             </motion.div>
-          )}
+          ))}
         </AnimatePresence>
 
         {/* Sidebar Left: Unit Info */}
@@ -1898,10 +1991,13 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
                             </div>
                             <button 
                               onClick={handleEntrench}
-                              disabled={selectedUnit.mp < 1 || selectedUnit.isEntrenched || selectedUnit.owner !== gameState.currentPlayer}
-                              className="py-3 border border-[#141414] uppercase text-[10px] font-bold tracking-widest hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30 transition-all flex items-center justify-center gap-2"
+                              disabled={selectedUnit.mp < 1 || selectedUnit.owner !== gameState.currentPlayer}
+                              className={cn(
+                                "py-3 border border-[#141414] uppercase text-[10px] font-bold tracking-widest disabled:opacity-30 transition-all flex items-center justify-center gap-2",
+                                selectedUnit.isEntrenched ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414] hover:text-[#E4E3E0]"
+                              )}
                             >
-                              <Shield size={14} /> Entrench
+                              <Shield size={14} /> {selectedUnit.isEntrenched ? 'Leave Earthworks (1 MP)' : 'Entrench (All MP)'}
                             </button>
                           </div>
 
@@ -2239,6 +2335,22 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
                   </div>
                 </section>
 
+                {/* The latest AI dispatch lives here, off the map, so it never hides the troops. */}
+                {gameState.monologueHistory.length > 0 && (() => {
+                  const latest = gameState.monologueHistory[gameState.monologueHistory.length - 1];
+                  return (
+                    <section>
+                      <h2 className="flex items-center justify-between text-[11px] uppercase tracking-widest opacity-50 font-serif italic mb-4">
+                        <span>General {latest.player}'s Dispatch</span>
+                        <span className="not-italic font-mono text-[9px]">Turn {latest.turn}</span>
+                      </h2>
+                      <div className={cn("p-3 border-l-2 max-h-[38vh] overflow-y-auto custom-scrollbar", side(latest.player).archive)}>
+                        <Markdown text={latest.text} className="space-y-1.5 font-serif italic text-[11px] leading-relaxed text-[#141414]/85" />
+                      </div>
+                    </section>
+                  );
+                })()}
+
                 <section>
                   <button 
                     onClick={() => setIsArchiveOpen(!isArchiveOpen)}
@@ -2269,7 +2381,7 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
                                   <span>Turn {m.turn} - Player {m.player}</span>
                                   <span>{new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                                 </div>
-                                <p className="font-serif italic text-[#141414]/80">"{m.text}"</p>
+                                <Markdown text={m.text} className="space-y-1 font-serif italic text-[#141414]/80" />
                               </div>
                             ))
                           )}

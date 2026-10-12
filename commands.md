@@ -32,7 +32,7 @@ This document provides a comprehensive list of commands, their usage, and the ru
 | `sel` | `sel <id>` | Selects a unit on the map (visual only). |
 | `mv` | `mv <id> <x>:<y>` | Moves a unit to an adjacent tile. Costs MP based on terrain. |
 | `eg` | `eg <id> <targetId>` | Engages (attacks) an enemy unit. Unit must have MP and be in range. |
-| `ent` | `ent <id>` | Entrenches a unit. Increases defense but costs all remaining MP (min 1). |
+| `ent` | `ent <id>` | Toggles entrenchment. Entrenching increases defense and costs all remaining MP (min 1); an entrenched unit cannot move. Leaving the earthworks costs 1 MP. |
 | `rtr` | `rtr <id>` | Rotates a unit 90° clockwise. Costs 1 MP. |
 | `rtl` | `rtl <id>` | Rotates a unit 90° counter-clockwise. Costs 1 MP. |
 | `rlt` | `rlt <id>` | Alias for `rtl`. |

@@ -59,7 +59,8 @@ Movement Points (MP) are consumed based on the terrain type:
 ---
 
 ## 🛡️ Special Abilities
-*   **Entrench (1 MP)**: Grants a +20% defense bonus. Removed if the unit moves.
+*   **Entrench (all remaining MP, at least 1)**: Grants a +20% defense bonus. Not allowed on the Capture Point.
+    *   **Holds the regiment in place**: an entrenched regiment cannot move. Leaving the earthworks (`ent` again) costs 1 MP, and the regiment can then march with the MP it has left.
 *   **Box Formation (1 MP to form or disband)**: (Line Infantry only)
     *   Grants a 360° firing arc, and the square cannot be flanked.
     *   **Proof against cavalry**: Hussars and Chasseurs deal only **25% damage** to a square.

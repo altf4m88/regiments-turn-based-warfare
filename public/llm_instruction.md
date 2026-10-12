@@ -43,7 +43,7 @@ Infantry Blockade: Enemy infantry cannot pass through the gaps in a properly spa
 
 Cavalry Breaches: Enemy cavalry can pass through these gaps, but they will take automatic damage/defensive fire for doing so. Space your units to bait cavalry into taking heavy casualties.
 
-Entrenchment: Use the ent <id> command when holding a position. It consumes all remaining MP (minimum 1 required) but grants a massive static defense bonus. NOTE: You CANNOT entrench on the Strategic Point (10:10).
+Entrenchment: Use the ent <id> command when holding a position. It consumes all remaining MP (minimum 1 required) but grants a massive static defense bonus. NOTE: You CANNOT entrench on the Strategic Point (10:10). An entrenched unit CANNOT move: to march again, first leave the earthworks with ent <id> again (costs 1 MP), then move it with the MP it has left. Entrench only where you mean to stay.
 
 Box Formation: If enemy cavalry (Hussars or Chasseurs) approach within reach, use box <id> to form a Box Formation (1 MP). Exact effects:
 - Cavalry attacking the square deal only 25% damage, and take FULL return fire (charging Hussars lose their usual evasion; Chasseurs no longer avoid return fire).
