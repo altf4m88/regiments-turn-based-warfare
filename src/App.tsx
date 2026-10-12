@@ -37,6 +37,8 @@ import {
   Settings,
   Cpu,
   Minus,
+  Pause,
+  Play,
   X,
   Box,
   LayoutGrid
@@ -454,6 +456,9 @@ export default function App() {
     }
   });
   const aiTurnRef = useRef<{ turn: number, player: number } | null>(null);
+  // Bumped when a battle is abandoned, so an AI turn still in flight stops touching the game.
+  const battleRef = useRef(0);
+  const [aiPaused, setAiPaused] = useState(false);
   const side = (player: number) => SIDE_UI[nationOf(gameState, player)];
 
   useEffect(() => {
@@ -1346,6 +1351,9 @@ export default function App() {
   };
 
   const runAiTurn = useCallback(async () => {
+    const battle = battleRef.current;
+    // False once the player abandons this battle: from then on this turn must not touch the game.
+    const live = () => battleRef.current === battle;
     const config = gameState.aiConfigs[gameState.currentPlayer];
     const { provider, apiKey, model, thinkingLevel } = resolveAiModel(config);
     if (!apiKey) {
@@ -1371,7 +1379,7 @@ export default function App() {
           return await fn();
         } catch (error: any) {
           lastError = error;
-          if (session?.isRateLimit(error) && i < maxRetries - 1) {
+          if (session?.isRateLimit(error) && i < maxRetries - 1 && live()) {
             const delay = Math.pow(2, i) * 2000 + Math.random() * 1000;
             addBattlefieldLog(`AI Player ${gameState.currentPlayer} is hitting rate limits. Retrying in ${Math.round(delay/1000)}s...`);
             await new Promise(resolve => setTimeout(resolve, delay));
@@ -1420,7 +1428,7 @@ export default function App() {
         });
       }
 
-      while (!turnEnded && iteration < 5) {
+      while (!turnEnded && iteration < 5 && live()) {
         // Only this general's own earlier dispatches: the enemy's plans stay secret.
         const lastMonologues = currentGameState.monologueHistory.filter(m => m.player === currentGameState.currentPlayer).slice(-2);
         const monologueContext = lastMonologues.length > 0 
@@ -1477,6 +1485,8 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
           response = await retryWithBackoff(() => chat.send(prompt));
         }
 
+        if (!live()) break;
+
         if (response.refusal) {
           // The model declined to answer: end its turn rather than retrying the same request.
           // The note goes into this turn's state, so the forced 'end' below keeps it.
@@ -1532,6 +1542,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
           let iterationCli: string[] = [];
 
           for (const cmd of commands) {
+            if (!live()) break;
             const trimmedCmd = cmd.trim();
             if (!trimmedCmd || trimmedCmd.startsWith('#')) continue;
 
@@ -1566,7 +1577,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
         }
 
         iteration++;
-        if (!turnEnded && iteration < 5) {
+        if (!turnEnded && iteration < 5 && live()) {
           addBattlefieldLog(`AI Player ${currentGameState.currentPlayer} is analyzing results...`);
           // Increased delay to stay under RPM limits
           await new Promise(resolve => setTimeout(resolve, 3500));
@@ -1575,7 +1586,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
 
       // Final safety check: if the turn hasn't ended after all iterations, force an end
       // This prevents the game from getting stuck if the AI fails to issue 'end'
-      if (currentGameState.currentPlayer === gameState.currentPlayer && !gameState.winner) {
+      if (live() && currentGameState.currentPlayer === gameState.currentPlayer && !gameState.winner) {
         addBattlefieldLog(`AI Player ${currentGameState.currentPlayer} turn timed out. Forcing end.`);
         const { newState } = applyCommands(currentGameState, 'end');
         setGameState(newState);
@@ -1592,6 +1603,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
       setTimeout(() => setAiMonologue(null), 3000);
     } catch (error: any) {
       console.error("AI Turn Error:", error);
+      if (!live()) return;
       if (session?.isRateLimit(error)) {
         addBattlefieldLog(`CRITICAL: AI Player ${gameState.currentPlayer} hit API rate limits. Please wait a minute before trying again or use a paid API key.`);
       } else {
@@ -1606,12 +1618,12 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
         }).catch(err => console.error("Failed to update LangSmith run with error:", err));
       }
     } finally {
-      setIsAiThinking(false);
+      if (live()) setIsAiThinking(false);
     }
   }, [aiInstructions, getGameStateString, gameState, executeCommand]);
 
   useEffect(() => {
-    if (gameState.gameMode === 'ai' && !gameState.winner && !isAiThinking) {
+    if (gameState.gameMode === 'ai' && !gameState.winner && !isAiThinking && !aiPaused) {
       // Check if we've already started processing this turn/player
       if (aiTurnRef.current?.turn === gameState.turn && aiTurnRef.current?.player === gameState.currentPlayer) {
         return;
@@ -1624,11 +1636,21 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
       }, 1000);
       return () => clearTimeout(timer);
     }
-  }, [gameState.gameMode, gameState.currentPlayer, gameState.winner, gameState.turn, isAiThinking, runAiTurn]);
+  }, [gameState.gameMode, gameState.currentPlayer, gameState.winner, gameState.turn, isAiThinking, aiPaused, runAiTurn]);
 
+  // Abandons the battle and returns to the start screen. An AI turn still in flight stops
+  // there, and the AI settings (keys included) carry over to the next battle.
   const resetGame = () => {
+    battleRef.current++;
     aiTurnRef.current = null;
-    setGameState(getInitialState());
+    setIsAiThinking(false);
+    setAiMonologue(null);
+    setAiPaused(false);
+    setGameState(prev => ({ ...getInitialState(), aiConfigs: prev.aiConfigs }));
+  };
+
+  const abandonBattle = () => {
+    if (window.confirm('Abandon this battle and return to the start screen?')) resetGame();
   };
 
   const exportLogs = () => {
@@ -1818,9 +1840,24 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
               );
             })()}
           </div>
+          {gameState.gameMode === 'ai' && (
+            <button
+              onClick={() => setAiPaused(p => !p)}
+              className={cn(
+                "px-3 py-2 border border-[#141414] text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 transition-colors",
+                aiPaused ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414] hover:text-[#E4E3E0]"
+              )}
+              title={aiPaused ? 'Resume the AI generals' : 'Pause the AI generals after the current turn'}
+            >
+              {aiPaused ? <Play size={14} /> : <Pause size={14} />}
+              {aiPaused ? (isAiThinking ? 'Pausing…' : 'Resume AI') : 'Pause AI'}
+            </button>
+          )}
           <button 
-            onClick={resetGame}
+            onClick={abandonBattle}
             className="p-2 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
+            title="Abandon this battle and return to the start screen"
+            aria-label="Abandon this battle and return to the start screen"
           >
             <RotateCcw size={18} />
           </button>
