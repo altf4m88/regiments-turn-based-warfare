@@ -8,35 +8,60 @@ import { Simplex, hash2, hashString, makeRng } from '../core/noise';
 /** Terrain kinds used for decoration; the playable map uses the game's own terrain values. */
 export type WorldTerrain = Tile['terrain'] | 'field' | 'camp';
 
-/** A stone bridge carrying the road over the river, sized to reach bank to bank. */
+/**
+ * A stone bridge carrying the road over the river, reaching bank to bank. It
+ * runs straight along the road's line through the water; where the river
+ * crosses that line at an angle the bridge is skewed, so its ends and piers
+ * sit square to the banks.
+ */
 export interface Bridge {
-  /** Map tiles the bridge stands on (the road tiles that replaced the river). */
+  /** Road tiles the bridge carries (the game's crossing tiles). */
   tiles: { tx: number; ty: number }[];
-  /** World axis the deck runs along (the direction you walk across). */
-  axis: 'x' | 'z';
-  /** World coordinate of the deck's centreline, across the axis. */
-  across: number;
-  /** Along-axis world coordinates of the two landings on the banks (a0 < a1). */
+  /** A point on the deck's centreline, and the unit direction the deck runs in. */
+  ox: number;
+  oz: number;
+  dx: number;
+  dz: number;
+  /** Shift along the deck of its ends and piers, per unit of distance across it. */
+  skew: number;
+  /** Landings on the two banks, as distance along the centreline from (ox, oz) (a0 < a1). */
   a0: number;
   a1: number;
   /** Deck height at each landing, and at the crown. */
   h0: number;
   h1: number;
   peak: number;
-  /** Along-axis extent of open water under the deck. */
+  /** Extent of open water under the deck, in the same unskewed frame as a0/a1. */
   w0: number;
   w1: number;
 }
 
-/** Walkable deck height at along-axis world coordinate `s`: a shallow hump from bank to bank. */
-export const deckHeight = (b: Bridge, s: number) => {
-  const u = clamp((s - b.a0) / (b.a1 - b.a0), 0, 1);
-  const k = 2 * u - 1;
-  return lerp(b.h0, b.h1, u) + (b.peak - (b.h0 + b.h1) / 2) * (1 - k * k);
+/** A point in a bridge's frame: `u` along the deck (unskewed, like a0/a1), `c` across it. */
+export const deckFrame = (b: Bridge, x: number, z: number) => {
+  const rx = x - b.ox, rz = z - b.oz;
+  const c = -rx * b.dz + rz * b.dx;
+  return { u: rx * b.dx + rz * b.dz - b.skew * c, c };
 };
 
-/** Furthest a deck reaches from a bridge tile's centre looking for a bank. */
-const BRIDGE_REACH = 3.2;
+/** World position of a point given in a bridge's frame. */
+export const deckPoint = (b: Bridge, u: number, c: number) => {
+  const s = u + b.skew * c;
+  return { x: b.ox + b.dx * s - b.dz * c, z: b.oz + b.dz * s + b.dx * c };
+};
+
+/** Walkable deck height at `u` along the bridge (see deckFrame): a shallow hump from bank to bank. */
+export const deckHeight = (b: Bridge, u: number) => {
+  const t = clamp((u - b.a0) / (b.a1 - b.a0), 0, 1);
+  const k = 2 * t - 1;
+  return lerp(b.h0, b.h1, t) + (b.peak - (b.h0 + b.h1) / 2) * (1 - k * k);
+};
+
+/** Channel radius: full depth inside R0, dry beyond R1. */
+const RIVER_R0 = TILE * 0.3, RIVER_R1 = TILE * 0.62;
+/** Steepest skew a bridge takes (along per unit across), about 50 degrees. */
+const MAX_SKEW = 1.2;
+/** Furthest a bridge turns away from the road's line to cross square to the river. */
+const MAX_TURN = Math.PI / 6;
 
 interface Seg { ax: number; az: number; bx: number; bz: number; minx: number; maxx: number; minz: number; maxz: number }
 
@@ -55,12 +80,15 @@ const segDist = (s: Seg, x: number, z: number) => {
   return Math.sqrt(dx * dx + dz * dz);
 };
 
+/** A point on the road's centreline; points at a map tile's centre carry that tile. */
+interface RoadPoint { x: number; z: number; tile?: { tx: number; ty: number } }
+
 const TOTAL = MAP_N + BORDER * 2;
 const bridgeKey = (tx: number, ty: number) => (ty + 1000) * 4096 + (tx + 1000);
 
 /**
  * Turns the 20x20 game map into a continuous landscape: a height field with
- * hills, a carved river (with bridges where the game overwrote river tiles),
+ * hills, a carved river (with bridges wherever the road crosses it),
  * flattened roads, and procedurally generated surroundings.
  */
 export class TerrainModel {
@@ -102,7 +130,6 @@ export class TerrainModel {
 
     this.buildExtendedTerrain();
     this.buildRiver();
-    this.buildRoad();
 
     const n = this.vn * this.vn;
     this.heights = new Float32Array(n);
@@ -115,8 +142,12 @@ export class TerrainModel {
     this.camp = new Float32Array(n);
     this.field = new Float32Array(n);
     this.border = new Float32Array(n);
+    this.carveRiver();
+    // The road comes after the river so it can find its crossings and run
+    // straight over each bridge, and before the heights it flattens.
+    this.buildRoad();
     this.buildHeights();
-    this.findBridges();
+    this.finishBridges();
   }
 
   /** Terrain of any tile, including the generated surroundings. */
@@ -151,8 +182,8 @@ export class TerrainModel {
     const list = this.deckMap.get(bridgeKey(Math.floor(x / TILE), Math.floor(z / TILE)));
     if (!list) return undefined;
     for (const b of list) {
-      const s = b.axis === 'x' ? x : z, c = b.axis === 'x' ? z : x;
-      if (s >= b.a0 - pad && s <= b.a1 + pad && Math.abs(c - b.across) <= BRIDGE_WIDTH / 2 + pad) return b;
+      const { u, c } = deckFrame(b, x, z);
+      if (Math.abs(c) <= BRIDGE_WIDTH / 2 + pad && u >= b.a0 - pad && u <= b.a1 + pad) return b;
     }
     return undefined;
   }
@@ -161,7 +192,7 @@ export class TerrainModel {
   ground(x: number, z: number): number {
     const h = this.height(x, z);
     const b = this.deckAt(x, z);
-    return b ? Math.max(h, deckHeight(b, b.axis === 'x' ? x : z)) : h;
+    return b ? Math.max(h, deckHeight(b, deckFrame(b, x, z).u)) : h;
   }
 
   /** Keeps a point on a bridge deck from stepping off the side into the river. */
@@ -170,8 +201,10 @@ export class TerrainModel {
     const b = this.bridgeMap.get(bridgeKey(Math.floor(x / TILE), Math.floor(z / TILE)));
     if (!b) return out;
     const lim = BRIDGE_WIDTH / 2 - 0.1;
-    if (b.axis === 'x') out.z = clamp(z, b.across - lim, b.across + lim);
-    else out.x = clamp(x, b.across - lim, b.across + lim);
+    const { u, c } = deckFrame(b, x, z);
+    if (Math.abs(c) <= lim) return out;
+    const p = deckPoint(b, u, clamp(c, -lim, lim));
+    out.x = p.x; out.z = p.z;
     return out;
   }
 
@@ -359,31 +392,34 @@ export class TerrainModel {
       ys[x] = l >= 0 ? ys[l] : ys[r];
     }
     const rng = makeRng(this.seed ^ 0xbeef);
-    const pts: { x: number; z: number }[] = [];
-    const left: { x: number; z: number }[] = [];
+    const left: RoadPoint[] = [];
     let y = ys[0]!;
     for (let k = 1; k <= BORDER + 2; k++) {
       y += Math.round((rng() - 0.5) * 0.9);
       left.unshift({ x: (-k + 0.5) * TILE, z: (y + 0.5) * TILE });
       this.clearForRoad(-k, y);
     }
-    pts.push(...left);
-    for (let x = 0; x < MAP_N; x++) pts.push({ x: (x + 0.5) * TILE, z: (ys[x]! + 0.5) * TILE });
+    const right: RoadPoint[] = [];
     y = ys[MAP_N - 1]!;
     for (let k = 0; k < BORDER + 2; k++) {
       y += Math.round((rng() - 0.5) * 0.9);
-      pts.push({ x: (MAP_N + k + 0.5) * TILE, z: (y + 0.5) * TILE });
+      right.push({ x: (MAP_N + k + 0.5) * TILE, z: (y + 0.5) * TILE });
       this.clearForRoad(MAP_N + k, y);
     }
-    // Light smoothing of the poly-line so the road meanders instead of zig-zagging.
+    const pts: RoadPoint[] = [...left, ...ys.map((ty, tx) => ({ x: (tx + 0.5) * TILE, z: (ty! + 0.5) * TILE, tile: { tx, ty: ty! } })), ...right];
+    // Light smoothing of the poly-line so the road meanders instead of zig-zagging,
+    // as long as that doesn't pull it into the river.
+    const rv = (x: number, z: number) => this.sampleGrid(this.river, x, z);
     const sm = pts.map((p, i) => {
       if (i === 0 || i === pts.length - 1) return p;
-      return { x: p.x, z: (pts[i - 1].z + p.z * 2 + pts[i + 1].z) / 4 };
+      const z = (pts[i - 1].z + p.z * 2 + pts[i + 1].z) / 4;
+      return rv(p.x, z) > Math.max(rv(p.x, p.z), 0.05) ? p : { ...p, z };
     });
-    for (let i = 1; i < sm.length; i++) {
-      this.roadSegs.push(makeSeg(sm[i - 1].x, sm[i - 1].z, sm[i].x, sm[i].z, TILE * 0.6));
+    const road = this.placeBridges(sm);
+    for (let i = 1; i < road.length; i++) {
+      this.roadSegs.push(makeSeg(road[i - 1].x, road[i - 1].z, road[i].x, road[i].z, TILE * 0.6));
     }
-    this.roadPolyline.push(...sm);
+    this.roadPolyline.push(...road.map(({ x, z }) => ({ x, z })));
   }
 
   private clearForRoad(tx: number, ty: number) {
@@ -399,6 +435,30 @@ export class TerrainModel {
       vals.push(row);
     }
     return vals;
+  }
+
+  /** Channel depth factor (0 = dry, 1 = channel core) at every height-grid vertex. */
+  private carveRiver() {
+    const n = this.noise, vn = this.vn;
+    for (let iz = 0; iz < vn; iz++) {
+      const z = WORLD_MIN + iz * this.step;
+      for (let ix = 0; ix < vn; ix++) {
+        const x = WORLD_MIN + ix * this.step;
+        let rv = 0;
+        for (const s of this.riverSegs) {
+          if (x < s.minx || x > s.maxx || z < s.minz || z > s.maxz) continue;
+          const d = segDist(s, x, z) + n.noise(x * 0.9, z * 0.9) * 0.12;
+          rv = Math.max(rv, 1 - smoothstep(RIVER_R0, RIVER_R1, d));
+        }
+        for (const c of this.riverTileCenters) {
+          const dx = Math.abs(x - c.x), dz = Math.abs(z - c.z);
+          if (dx > RIVER_R1 || dz > RIVER_R1) continue;
+          const d = Math.pow(dx ** 4 + dz ** 4, 0.25);
+          rv = Math.max(rv, 1 - smoothstep(RIVER_R0 + 0.06, RIVER_R1, d));
+        }
+        this.river[iz * vn + ix] = rv;
+      }
+    }
   }
 
   private buildHeights() {
@@ -424,7 +484,6 @@ export class TerrainModel {
     const n = this.noise, n2 = this.noise2;
     const vn = this.vn;
     const mapMax = MAP_N * TILE;
-    const r0 = TILE * 0.3, r1 = TILE * 0.62;
     const roadIn = TILE * 0.2, roadOut = TILE * 0.34;
 
     for (let iz = 0; iz < vn; iz++) {
@@ -454,18 +513,7 @@ export class TerrainModel {
         h = lerp(h, hh + h * 0.15, road * 0.85);
 
         // The river carves its channel.
-        let rv = 0;
-        for (const s of this.riverSegs) {
-          if (x < s.minx || x > s.maxx || z < s.minz || z > s.maxz) continue;
-          const d = segDist(s, x, z) + n.noise(x * 0.9, z * 0.9) * 0.12;
-          rv = Math.max(rv, 1 - smoothstep(r0, r1, d));
-        }
-        for (const c of this.riverTileCenters) {
-          const dx = Math.abs(x - c.x), dz = Math.abs(z - c.z);
-          if (dx > r1 || dz > r1) continue;
-          const d = Math.pow(dx ** 4 + dz ** 4, 0.25);
-          rv = Math.max(rv, 1 - smoothstep(r0 + 0.06, r1, d));
-        }
+        const rv = this.river[i];
         h = lerp(h, RIVER_BED + n2.noise(x * 0.5, z * 0.5) * 0.04, rv);
 
         // Fade to a flat plain at the very edge of the generated world.
@@ -487,78 +535,156 @@ export class TerrainModel {
     }
   }
 
-  private findBridges() {
-    const half = BRIDGE_WIDTH / 2;
-    const offsets = [-half, 0, half];
-    const at = (axis: 'x' | 'z', s: number, c: number): [number, number] => (axis === 'x' ? [s, c] : [c, s]);
-    // Any part of the deck's width still over the channel?
-    const wet = (axis: 'x' | 'z', s: number, c: number) =>
-      offsets.some(o => this.sampleGrid(this.river, ...at(axis, s, c + o)) > 0.12);
-    // March out from a point in the river until the whole deck width is over the bank,
-    // then carry on a little so the abutment beds into it.
-    const landing = (axis: 'x' | 'z', start: number, dir: number, c: number) => {
-      let d = 0;
-      while (d < BRIDGE_REACH && wet(axis, start + dir * d, c)) d += 0.05;
-      return start + dir * (d + 0.2);
-    };
+  /**
+   * Bridges wherever the road crosses the channel. Each runs straight along the
+   * road's line from where it enters the water to where it leaves (a road that
+   * changes row mid-river gets one bridge on the diagonal), skewed to the angle
+   * the river crosses at. Returns the road with the points each bridge carries
+   * replaced by its two landings.
+   */
+  private placeBridges(verts: RoadPoint[]): RoadPoint[] {
+    const rv = (x: number, z: number) => this.sampleGrid(this.river, x, z);
+    const STEP = 0.05, WET = 0.12;
 
-    // 1. Which tiles need a bridge, and which way it runs. Roads cross along x, so a
-    //    road tile keeps that unless crossing the other way is much shorter.
-    const axisOf = new Map<number, 'x' | 'z'>();
-    for (let ty = 0; ty < MAP_N; ty++) {
-      for (let tx = 0; tx < MAP_N; tx++) {
-        if (this.map[ty][tx].terrain === 'river') continue;
-        const cx = (tx + 0.5) * TILE, cz = (ty + 0.5) * TILE;
-        if (this.sampleGrid(this.river, cx, cz) < 0.5) continue;
-        const lenX = landing('x', cx, 1, cz) - landing('x', cx, -1, cz);
-        const lenZ = landing('z', cz, 1, cx) - landing('z', cz, -1, cx);
-        const bias = this.map[ty][tx].terrain === 'road' ? 0.75 : 1;
-        axisOf.set(bridgeKey(tx, ty), lenX * bias <= lenZ ? 'x' : 'z');
+    // Walk the road, marking the stretches where it is in the channel.
+    const samples: { x: number; z: number; t: number; v: number }[] = [];
+    for (let i = 0; i < verts.length - 1; i++) {
+      const a = verts[i], b = verts[i + 1];
+      const n = Math.ceil(Math.hypot(b.x - a.x, b.z - a.z) / STEP);
+      for (let k = 0; k < n; k++) {
+        const x = lerp(a.x, b.x, k / n), z = lerp(a.z, b.z, k / n);
+        samples.push({ x, z, t: i + k / n, v: rv(x, z) });
       }
     }
+    const last = verts[verts.length - 1];
+    samples.push({ x: last.x, z: last.z, t: verts.length - 1, v: rv(last.x, last.z) });
+    const runs: [number, number][] = [];
+    for (let i = 0; i < samples.length; i++) {
+      if (samples[i].v < WET) continue;
+      let j = i;
+      while (j + 1 < samples.length && samples[j + 1].v >= WET) j++;
+      let deep = 0;
+      for (let k = i; k <= j; k++) deep = Math.max(deep, samples[k].v);
+      // Ignore the road brushing a bank; join channels with only a sliver of land between.
+      if (deep >= 0.35) {
+        const prev = runs[runs.length - 1];
+        if (prev && (i - prev[1]) * STEP < 1.0) prev[1] = j;
+        else runs.push([i, j]);
+      }
+      i = j;
+    }
 
-    // 2. Neighbouring tiles crossing the same way share one bridge.
-    const done = new Set<number>();
-    for (let ty = 0; ty < MAP_N; ty++) {
-      for (let tx = 0; tx < MAP_N; tx++) {
-        const axis = axisOf.get(bridgeKey(tx, ty));
-        if (!axis || done.has(bridgeKey(tx, ty))) continue;
-        const tiles: { tx: number; ty: number }[] = [];
-        for (let ux = tx, uy = ty; axisOf.get(bridgeKey(ux, uy)) === axis && !done.has(bridgeKey(ux, uy));) {
-          tiles.push({ tx: ux, ty: uy });
-          done.add(bridgeKey(ux, uy));
-          if (axis === 'x') ux++; else uy++;
-        }
-        const first = tiles[0], last = tiles[tiles.length - 1];
-        const along = (t: { tx: number; ty: number }) => ((axis === 'x' ? t.tx : t.ty) + 0.5) * TILE;
-        const across = ((axis === 'x' ? first.ty : first.tx) + 0.5) * TILE;
-        const a0 = landing(axis, along(first), -1, across);
-        const a1 = landing(axis, along(last), 1, across);
-        // Landings sit just on top of the highest ground under the deck's width.
-        const bank = (s: number) => Math.max(...offsets.map(o => this.height(...at(axis, s, across + o)))) + 0.015;
-        const h0 = bank(a0), h1 = bank(a1);
-        let w0 = Infinity, w1 = -Infinity;
-        for (let s = a0; s <= a1; s += 0.05) {
-          if (this.height(...at(axis, s, across)) < WATER_LEVEL + 0.02) {
-            w0 = Math.min(w0, s);
-            w1 = Math.max(w1, s);
+    const half = BRIDGE_WIDTH / 2;
+    const offsets = [-half, -half / 2, 0, half / 2, half];
+    const out: (RoadPoint & { key: number })[] = [];
+    const dropped = new Set<number>();
+    for (const [i, j] of runs) {
+      const E = samples[Math.max(0, i - 1)], X = samples[Math.min(samples.length - 1, j + 1)];
+      const len = Math.hypot(X.x - E.x, X.z - E.z);
+      // Start along the road's line through the water, centred on the crossing.
+      const b: Bridge = {
+        tiles: [], ox: (E.x + X.x) / 2, oz: (E.z + X.z) / 2, dx: (X.x - E.x) / len, dz: (X.z - E.z) / len,
+        skew: 0, a0: -len / 2, a1: len / 2, h0: 0, h1: 0, peak: 0, w0: 0, w1: 0,
+      };
+      // Where the channel starts and ends along each line of the deck's width, and from
+      // that the skew and the landings.
+      const fit = () => {
+        b.skew = 0;
+        const wetRun = (o: number): [number, number] | null => {
+          const at = (u: number) => { const p = deckPoint(b, u, o); return rv(p.x, p.z); };
+          let u0: number | null = null;
+          for (let d = 0; d <= len / 2 + 2 && u0 === null; d += STEP) {
+            if (at(-d) >= WET) u0 = -d;
+            else if (at(d) >= WET) u0 = d;
+          }
+          if (u0 === null) return null;
+          let lo = u0, hi = u0;
+          while (lo > -len - 4 && at(lo - STEP) >= WET) lo -= STEP;
+          while (hi < len + 4 && at(hi + STEP) >= WET) hi += STEP;
+          return [lo, hi];
+        };
+        const edges = offsets.map(o => ({ o, run: wetRun(o) })).filter(r => r.run) as { o: number; run: [number, number] }[];
+        const edgeA = edges.find(r => r.o === -half), edgeB = edges.find(r => r.o === half);
+        const mid = (r: [number, number]) => (r[0] + r[1]) / 2;
+        const skew = edgeA && edgeB ? (mid(edgeB.run) - mid(edgeA.run)) / BRIDGE_WIDTH : 0;
+        b.skew = clamp(skew, -MAX_SKEW, MAX_SKEW);
+        b.a0 = Math.min(-len / 2, ...edges.map(r => r.run[0] - b.skew * r.o)) - 0.2;
+        b.a1 = Math.max(len / 2, ...edges.map(r => r.run[1] - b.skew * r.o)) + 0.2;
+        return skew;
+      };
+      // Bridges cross square to the river where they can: turn towards that (the road
+      // bends to meet the landings) and leave the rest to the skew.
+      const skew = fit();
+      if (Math.abs(skew) > 0.3) {
+        const turn = clamp(-Math.atan(skew), -MAX_TURN, MAX_TURN);
+        const cs = Math.cos(turn), sn = Math.sin(turn);
+        [b.dx, b.dz] = [b.dx * cs - b.dz * sn, b.dz * cs + b.dx * sn];
+        fit();
+      }
+      this.bridges.push(b);
+
+      // Road tiles on the bridge give way to its landings.
+      let first = Infinity, lastDropped = -Infinity;
+      verts.forEach((v, k) => {
+        // Everything on the stretch of road it replaces, and any point just past a landing.
+        const { u, c } = deckFrame(b, v.x, v.z);
+        const within = k > E.t && k < X.t;
+        if (!within && (u < b.a0 - 0.3 || u > b.a1 + 0.3 || Math.abs(c) > TILE * 0.75)) return;
+        dropped.add(k);
+        first = Math.min(first, k);
+        lastDropped = Math.max(lastDropped, k);
+        if (v.tile && rv(v.x, v.z) >= WET) b.tiles.push(v.tile);
+      });
+      if (!b.tiles.length) {
+        // The channel runs between two tile centres: the bridge belongs to the nearer one.
+        const m = deckPoint(b, (b.a0 + b.a1) / 2, 0);
+        const near = verts.filter(v => v.tile).reduce((p, v) => (Math.hypot(v.x - m.x, v.z - m.z) < Math.hypot(p.x - m.x, p.z - m.z) ? v : p));
+        if (Math.hypot(near.x - m.x, near.z - m.z) < TILE) b.tiles.push(near.tile!);
+      }
+      for (const t of b.tiles) this.bridgeMap.set(bridgeKey(t.tx, t.ty), b);
+      const p0 = deckPoint(b, b.a0, 0), p1 = deckPoint(b, b.a1, 0);
+      out.push({ ...p0, key: Math.min(E.t, first - 0.01) });
+      out.push({ ...p1, key: Math.max(X.t, lastDropped + 0.01) });
+    }
+    verts.forEach((v, k) => { if (!dropped.has(k)) out.push({ ...v, key: k }); });
+    out.sort((a, b) => a.key - b.key);
+    return out.map(({ key: _key, ...p }) => p);
+  }
+
+  /** Once the ground exists: deck heights, the water the arches span, and the deck index. */
+  private finishBridges() {
+    const half = BRIDGE_WIDTH / 2;
+    const offsets = [-half, -half / 2, 0, half / 2, half];
+    for (const b of this.bridges) {
+      const h = (u: number, o: number) => { const p = deckPoint(b, u, o); return this.height(p.x, p.z); };
+      // Landings sit just on top of the highest ground under the deck's width.
+      b.h0 = Math.max(...offsets.map(o => h(b.a0, o))) + 0.015;
+      b.h1 = Math.max(...offsets.map(o => h(b.a1, o))) + 0.015;
+      let w0 = Infinity, w1 = -Infinity;
+      for (const o of offsets) {
+        for (let u = b.a0; u <= b.a1; u += 0.05) {
+          if (h(u, o) < WATER_LEVEL + 0.02) {
+            w0 = Math.min(w0, u);
+            w1 = Math.max(w1, u);
           }
         }
-        if (w0 > w1) { w0 = a0 + 0.4; w1 = a1 - 0.4; }
-        const peak = Math.max(0.15 + hash2(tx, ty, this.seed) * 0.02 + 0.012 * (a1 - a0), Math.max(h0, h1) + 0.06);
-        const b: Bridge = { tiles, axis, across, a0, a1, h0, h1, peak, w0, w1 };
-        this.bridges.push(b);
-        for (const t of tiles) this.bridgeMap.set(bridgeKey(t.tx, t.ty), b);
-        // Index every tile the deck (plus a margin) overlaps, for ground() lookups.
-        const pad = 0.5;
-        const s0 = Math.floor((a0 - pad) / TILE), s1 = Math.floor((a1 + pad) / TILE);
-        const c0 = Math.floor((across - half - pad) / TILE), c1 = Math.floor((across + half + pad) / TILE);
-        for (let si = s0; si <= s1; si++) {
-          for (let ci = c0; ci <= c1; ci++) {
-            const key = axis === 'x' ? bridgeKey(si, ci) : bridgeKey(ci, si);
-            const list = this.deckMap.get(key);
-            if (list) list.push(b); else this.deckMap.set(key, [b]);
-          }
+      }
+      if (w0 > w1) { w0 = b.a0 + 0.4; w1 = b.a1 - 0.4; }
+      b.w0 = w0;
+      b.w1 = w1;
+      const len = b.a1 - b.a0;
+      b.peak = Math.max(0.15 + hash2(Math.round(b.ox), Math.round(b.oz), this.seed) * 0.02 + 0.012 * len, Math.max(b.h0, b.h1) + 0.06);
+
+      // Index every tile the deck (plus a margin) overlaps, for ground() lookups.
+      const corners = [b.a0, b.a1].flatMap(u => [-half, half].map(c => deckPoint(b, u, c)));
+      const pad = 0.5;
+      const x0 = Math.floor((Math.min(...corners.map(p => p.x)) - pad) / TILE), x1 = Math.floor((Math.max(...corners.map(p => p.x)) + pad) / TILE);
+      const z0 = Math.floor((Math.min(...corners.map(p => p.z)) - pad) / TILE), z1 = Math.floor((Math.max(...corners.map(p => p.z)) + pad) / TILE);
+      for (let tx = x0; tx <= x1; tx++) {
+        for (let tz = z0; tz <= z1; tz++) {
+          const key = bridgeKey(tx, tz);
+          const list = this.deckMap.get(key);
+          if (list) list.push(b); else this.deckMap.set(key, [b]);
         }
       }
     }

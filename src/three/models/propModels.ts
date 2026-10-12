@@ -332,15 +332,18 @@ export interface BridgeSpec {
   w0: number;
   w1: number;
   width: number;
-  /** Walkable deck height at local x. */
+  /** Shift in x per unit of z, so the ends and piers lie along a river crossing at an angle. */
+  skew: number;
+  /** Walkable deck height at local x, measured before the skew. */
   deck: (x: number) => number;
 }
 
 /**
  * A stone road bridge running along local +X from bank to bank: arches over
  * the water on pointed cutwaters, a humped roadway, parapets and end posts.
+ * A skewed bridge is built square, then sheared to the river's angle.
  */
-export const buildStoneBridge = ({ x0, x1, w0, w1, width, deck }: BridgeSpec) => {
+export const buildStoneBridge = ({ x0, x1, w0, w1, width, skew, deck }: BridgeSpec) => {
   const b = new GeoBuilder();
   const BED = -0.6, SPRING = -0.12, PIER = 0.2;
   const n = Math.max(8, Math.ceil((x1 - x0) / 0.12));
@@ -406,5 +409,8 @@ export const buildStoneBridge = ({ x0, x1, w0, w1, width, deck }: BridgeSpec) =>
       b.add(new THREE.ConeGeometry(PIER / 2 + 0.01, 0.12, 2, 1, false, 0, Math.PI), STONE_DARK, { p: [px, SPRING + 0.16, pz], r });
     }
   }
-  return b.build();
+  const geo = b.build();
+  // Skew the whole bridge (x += skew * z) so abutments, piers and cutwaters follow the banks.
+  if (skew) geo.applyMatrix4(new THREE.Matrix4().set(1, 0, skew, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1));
+  return geo;
 };

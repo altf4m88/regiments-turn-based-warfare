@@ -8,7 +8,7 @@ import * as P from '../models/propModels';
 import { buildGun, buildHorseBody, buildHorseLeg, buildWheel, HORSE_LEGS, HORSE_LEG_TOP, WHEEL_R, WHEEL_X } from '../models/unitModels';
 import { makeBannerTexture, makeFlagMesh } from '../models/flags';
 import { Obstacles } from './obstacles';
-import { TerrainModel, deckHeight } from './TerrainModel';
+import { TerrainModel, deckHeight, deckPoint } from './TerrainModel';
 
 export const swayUniforms = { uTime: { value: 0 } };
 
@@ -465,11 +465,11 @@ export class Scenery {
       const mid = (b.a0 + b.a1) / 2;
       const geo = P.buildStoneBridge({
         x0: b.a0 - mid, x1: b.a1 - mid, w0: b.w0 - mid, w1: b.w1 - mid,
-        width: BRIDGE_WIDTH, deck: x => deckHeight(b, mid + x),
+        width: BRIDGE_WIDTH, skew: b.skew, deck: x => deckHeight(b, mid + x),
       });
-      // Local +X runs along the bridge: world +X, or world +Z after a -90° turn.
-      if (b.axis === 'x') this.single(geo, mid, 0, b.across, 0);
-      else this.single(geo, b.across, 0, mid, -Math.PI / 2);
+      // Local +X runs along the deck and local +Z across it, matching deckFrame.
+      const c = deckPoint(b, mid, 0);
+      this.single(geo, c.x, 0, c.z, Math.atan2(-b.dz, b.dx));
     }
   }
 
