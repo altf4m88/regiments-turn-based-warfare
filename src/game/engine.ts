@@ -72,12 +72,16 @@ const generateStandardColor = () => {
   return colors[Math.floor(Math.random() * colors.length)];
 };
 
+/**
+ * Supply cost of a reinforcement. Set high enough that, on +50 base income, a side can
+ * afford a new line regiment about every four turns rather than every other turn.
+ */
 export const UNIT_COSTS: { [key in UnitType]: number } = {
-  line_infantry: 100,
-  light_infantry: 120,
-  cannon: 200,
-  hussars: 150,
-  chasseurs: 180,
+  line_infantry: 200,
+  light_infantry: 240,
+  cannon: 400,
+  hussars: 300,
+  chasseurs: 360,
 };
 
 export const SUPPLY_PER_TURN = 50;

@@ -512,6 +512,7 @@ export default function App() {
     stateStr += `Armies: Player 1 = ${NATIONS[nationOf(state, 1)].adjective}, Player 2 = ${NATIONS[nationOf(state, 2)].adjective}\n`;
     stateStr += `Current Player: Player ${state.currentPlayer}\n`;
     stateStr += `Supply: P1: ${state.supply[1]}, P2: ${state.supply[2]}\n`;
+    stateStr += `Reinforcement costs: ${Object.entries(UNIT_COSTS).map(([t, c]) => `${t} ${c}`).join(', ')}\n`;
     stateStr += `Capture Point (10:10): ${state.capturePointOwner ? `Owned by P${state.capturePointOwner} (${state.capturePointTurns}/5 turns)` : 'Uncaptured'}\n\n`;
 
     // Objectives and terrain, so a general never has to spend an iteration on reconnaissance.

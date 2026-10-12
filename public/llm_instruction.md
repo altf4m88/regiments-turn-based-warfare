@@ -72,7 +72,7 @@ Each unit command names a regiment by ID, and its cost comes out of that regimen
 | `ent <id>` | Dig in: +60% defense, and cannon deal half damage to it. An entrenched regiment cannot move. Not allowed on the Capture Point. `ent <id>` again leaves the earthworks. | Digging in: all remaining MP (at least 1). Leaving: 1 MP |
 | `box <id>` | Line infantry only: form or disband a square (see Box Formation) | 1 MP |
 | `pal <id>` | Cannon only: put up or take down palisades. Palisades give +70% defense; a palisaded gun can only fire in a 90° cone ahead and cannot move or rotate. | All remaining MP (at least 1) |
-| `spawn <type>` | Call up a reinforcement: `line_infantry`, `light_infantry`, `cannon`, `hussars` or `chasseurs`. It appears on an empty tile next to your Command Center (not river or hills) with no MP, and cannot act until your next turn. | Supply: line infantry 100, light infantry 120, hussars 150, chasseurs 180, cannon 200 |
+| `spawn <type>` | Call up a reinforcement: `line_infantry`, `light_infantry`, `cannon`, `hussars` or `chasseurs`. It appears on an empty tile next to your Command Center (not river or hills) with no MP, and cannot act until your next turn. | Supply: line infantry 200, light infantry 240, hussars 300, chasseurs 360, cannon 400 (also listed in each turn's state) |
 | `end` | End your turn | |
 
 You also have free information commands: `status`, `whoami`, `ls` (your regiments), `ls all`, `ls map`, `ls tile <x>:<y>`, `ls info <id>` and `ls costs`. You rarely need them, because the state you receive already shows everything.
