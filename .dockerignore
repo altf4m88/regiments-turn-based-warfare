@@ -1,0 +1,12 @@
+# Keep the build context small and never ship local secrets into an image.
+node_modules
+dist
+build
+coverage
+.git
+.github
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store

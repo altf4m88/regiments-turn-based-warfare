@@ -42,6 +42,55 @@ The 3D code lives in `src/three/`, and three.js is code-split so the 2D view sta
 - `units/`: formations and per-figure animation.
 - `scene/`: the renderer, camera, effects, audio and overlays.
 
+# Deploy to Google Cloud (Cloud Run)
+Regiments is a static single-page app, so it deploys as a small nginx container on [Cloud Run](https://cloud.google.com/run). Cloud Run scales to zero, so you only pay while someone is playing. The repo includes:
+- `Dockerfile`: builds the app with Node 22, then serves `dist/` with unprivileged nginx on Cloud Run's `$PORT`.
+- `deploy/nginx.conf.template`: SPA fallback, gzip, long-lived caching for fingerprinted `/assets`, and no caching for `index.html`.
+- `cloudbuild.yaml`: build → push to Artifact Registry → deploy to Cloud Run, for continuous deployment.
+
+**API keys stay in the browser.** Players type their Gemini / LangSmith keys into *AI Settings*, and the deployed site never sees them. Don't put keys in a `.env` for the build: Vite inlines `define`d variables into the public JavaScript. `.dockerignore` keeps `.env*` files out of the image anyway.
+
+### One-time setup
+```bash
+gcloud auth login
+gcloud config set project YOUR_PROJECT_ID
+gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com
+```
+
+### Option A: deploy from your machine (one command)
+```bash
+gcloud run deploy regiments --source . --region us-central1 --allow-unauthenticated
+```
+Cloud Build builds the `Dockerfile` remotely, so you don't need Docker installed. The command prints the service URL when it finishes. Run it again to ship a new version.
+
+### Option B: deploy automatically on every push to `main`
+1. Create the image repository once:
+   ```bash
+   gcloud artifacts repositories create regiments --repository-format=docker --location=us-central1
+   ```
+2. Let Cloud Build deploy to Cloud Run. New projects build as the Compute Engine default service account; older projects use `PROJECT_NUMBER@cloudbuild.gserviceaccount.com` instead.
+   ```bash
+   PROJECT_ID=$(gcloud config get-value project)
+   SA="$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')-compute@developer.gserviceaccount.com"
+   for role in roles/run.admin roles/iam.serviceAccountUser roles/artifactregistry.writer; do
+     gcloud projects add-iam-policy-binding $PROJECT_ID --member="serviceAccount:$SA" --role=$role
+   done
+   ```
+3. In the console, open **Cloud Build → Triggers → Create trigger**:
+   - Connect this GitHub repository.
+   - Event: *Push to a branch*, branch `^main$`.
+   - Configuration: *Cloud Build configuration file* `cloudbuild.yaml`.
+
+You can also run the pipeline by hand with `gcloud builds submit --config cloudbuild.yaml`. To change the region, service name or repository name, pass `--substitutions=_REGION=europe-west1,_SERVICE=regiments,_REPOSITORY=regiments`.
+
+### Test the container locally
+```bash
+docker build -t regiments .
+docker run --rm -p 8080:8080 regiments   # open http://localhost:8080
+```
+
+> If `--allow-unauthenticated` fails with a policy error, your organisation restricts public services (Domain Restricted Sharing). Ask an org admin for an exception, or keep the service private and put it behind IAP.
+
 # Starting Point
 <img width="1470" height="677" alt="Screenshot 2026-03-26 at 10 48 48" src="https://github.com/user-attachments/assets/281a4ac0-ea71-4b05-8af7-d1a1dcf43990" />
 

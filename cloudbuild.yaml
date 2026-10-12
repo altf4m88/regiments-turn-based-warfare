@@ -1,0 +1,49 @@
+# Builds the container, pushes it to Artifact Registry and deploys it to Cloud Run.
+#
+# Run it by hand:   gcloud builds submit --config cloudbuild.yaml
+# or attach it to a Cloud Build trigger on pushes to main (see README).
+#
+# Override any of these with --substitutions=_REGION=europe-west1,...
+substitutions:
+  _REGION: us-central1
+  _SERVICE: regiments
+  _REPOSITORY: regiments
+
+options:
+  # Required when builds run as the Compute Engine default service account.
+  logging: CLOUD_LOGGING_ONLY
+
+steps:
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --tag=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$BUILD_ID
+      - --tag=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:latest
+      - .
+
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$BUILD_ID
+      - --region=${_REGION}
+      - --port=8080
+      - --allow-unauthenticated
+      - --min-instances=0
+      - --max-instances=3
+      - --quiet
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$BUILD_ID
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:latest
