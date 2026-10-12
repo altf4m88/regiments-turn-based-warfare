@@ -3,6 +3,45 @@ It's kinda mix of chess and Total War mechanics, you move your Regiments per tur
 This game specifically made to be playable by Large-Language Model, my purpose is to study LLM tactical awareness and how LLM compete strategically to achieve desired objectives with resource in mind.
 
 
+# 3D Battlefield
+The battle now plays out on a fully 3D field (toggle **3D / 2D** in the header; 3D is the default). It is a view over the exact same engine: rules, the CLI and the AI generals are unchanged, and everything is generated procedurally in code with no model, texture or audio files.
+
+**The map.** The 20×20 tile map becomes a continuous landscape with rolling hills, wooded copses, villages with churches and garden walls, a river that winds across the field (stone bridges wherever the road crosses it), and dirt roads lined with poplars beyond the battlefield. Each army's headquarters (a manor, tents, an artillery park and horse lines) sits behind its command centre. Supply depots have wagons and crates and fly their owner's banner. At the capture point, one brazier is lit for every turn it has been held.
+
+**The regiments.** Napoleonic miniatures, about half a unit tall:
+- Line infantry stand in three ranks with their colours (painted with each regiment's own `standardColor`), an officer and a drummer.
+- Light infantry deploy in a loose skirmish chain.
+- Gunners crew their field pieces.
+- Hussars ride in busbies and pelisses, chasseurs carry carbines, and each squadron has a guidon.
+
+The number of figures tracks each regiment's strength.
+
+**The animations.**
+- Line infantry march in column and deploy back into line, and they form a two-rank hollow square in box formation.
+- Line volleys ripple down the ranks with muzzle flashes and drifting powder smoke, and the target returns fire.
+- Cannon recoil, and the round shot arcs, grazes and bounces through its target.
+- Hussars charge in with sabres raised, clash, and wheel back.
+- Men fall when the shot lands and stay on the field. Regiments that are wiped out drop their colours with a "ROUTED" marker.
+- Entrenching throws up earthworks, cannon erect palisades, units wade through fords, and reinforcements march out of the command centre.
+- Flags, trees and grass move in the wind, and the water flows.
+- Sound (volleys, cannon, hooves, sabres, drums, a bugle) is synthesised with WebAudio.
+
+**Playing in 3D.** Hovering a tile shows its terrain, MP cost and defence, plus a march path or an "engage" hint. The selected regiment's march range, dangerous gaps in the enemy line, firing arc and attackable targets are painted on the ground. Clicking a distant reachable tile marches there using the same `mv` command the CLI and the AI use. The **Follow** camera (on by default in AI mode) flies to the action, and a minimap shows where you are looking.
+
+| Input | Action |
+| :--- | :--- |
+| Click | Select / move / attack (a click on a unit label selects it too) |
+| Drag · Right-drag · Wheel | Pan · Rotate · Zoom |
+| WASD / arrows · Q / E | Pan · Rotate |
+| Double-click / `F` | Focus a tile / the selected regiment |
+| `Home` | Overview of the whole field |
+
+The 3D code lives in `src/three/`, and three.js is code-split so the 2D view stays light. The folders are:
+- `world/`: the landscape, water, sky and scenery.
+- `models/`: procedural soldiers, horses, guns, flags and buildings.
+- `units/`: formations and per-figure animation.
+- `scene/`: the renderer, camera, effects, audio and overlays.
+
 # Starting Point
 <img width="1470" height="677" alt="Screenshot 2026-03-26 at 10 48 48" src="https://github.com/user-attachments/assets/281a4ac0-ea71-4b05-8af7-d1a1dcf43990" />
 
