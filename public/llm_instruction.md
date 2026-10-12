@@ -91,6 +91,8 @@ You also have free information commands: `status`, `whoami`, `ls` (your regiment
 ## 6. Tactical advice
 
 - **Go for the center early.** Send a strong group toward 10:10, take it with one regiment, and then step that regiment off onto better ground while line infantry close the approaches. Entrench those that will hold.
+- **Tempo wins; waiting loses.** Nothing scores while armies trade cannon fire at long range. The side that owns the center wins in 5 turns, so the side that does not own it must attack. Within the first few turns, bring your line infantry to musket range (2) of the enemy and fire every turn. Cannon soften a line before the assault; they are not a substitute for it.
+- **Entrench only where you mean to hold** (the approaches to the center, your Command Center). An entrenched regiment out of range of the enemy does nothing, and it cannot advance.
 - **Line infantry is the anvil.** Lines two tiles apart wall off enemy infantry. Face them toward the enemy and fire every turn; a regiment that marched still has its attack.
 - **Hussars are the hammer.** Use roads to get around the flanks. Hit light infantry, line infantry from behind, and cannon. Never charge the front of line infantry or a square.
 - **Chasseurs and light infantry skirmish.** Line infantry cannot shoot back at them, and forests and villages protect them.
