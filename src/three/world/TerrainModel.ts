@@ -1,6 +1,6 @@
 import { Tile } from '../../game/types';
 import {
-  BORDER, BRIDGE_WIDTH, MAP_N, RES, RIVER_BED, TILE, WORLD_MIN, WORLD_SIZE,
+  BORDER, BRIDGE_WIDTH, MAP_N, RES, RIVER_BED, TILE, WATER_LEVEL, WORLD_MIN, WORLD_SIZE,
   clamp, inMap, lerp, smoothstep,
 } from '../core/constants';
 import { Simplex, hash2, hashString, makeRng } from '../core/noise';
@@ -8,13 +8,35 @@ import { Simplex, hash2, hashString, makeRng } from '../core/noise';
 /** Terrain kinds used for decoration; the playable map uses the game's own terrain values. */
 export type WorldTerrain = Tile['terrain'] | 'field' | 'camp';
 
+/** A stone bridge carrying the road over the river, sized to reach bank to bank. */
 export interface Bridge {
-  tx: number;
-  ty: number;
+  /** Map tiles the bridge stands on (the road tiles that replaced the river). */
+  tiles: { tx: number; ty: number }[];
   /** World axis the deck runs along (the direction you walk across). */
   axis: 'x' | 'z';
-  deck: number;
+  /** World coordinate of the deck's centreline, across the axis. */
+  across: number;
+  /** Along-axis world coordinates of the two landings on the banks (a0 < a1). */
+  a0: number;
+  a1: number;
+  /** Deck height at each landing, and at the crown. */
+  h0: number;
+  h1: number;
+  peak: number;
+  /** Along-axis extent of open water under the deck. */
+  w0: number;
+  w1: number;
 }
+
+/** Walkable deck height at along-axis world coordinate `s`: a shallow hump from bank to bank. */
+export const deckHeight = (b: Bridge, s: number) => {
+  const u = clamp((s - b.a0) / (b.a1 - b.a0), 0, 1);
+  const k = 2 * u - 1;
+  return lerp(b.h0, b.h1, u) + (b.peak - (b.h0 + b.h1) / 2) * (1 - k * k);
+};
+
+/** Furthest a deck reaches from a bridge tile's centre looking for a bank. */
+const BRIDGE_REACH = 3.2;
 
 interface Seg { ax: number; az: number; bx: number; bz: number; minx: number; maxx: number; minz: number; maxz: number }
 
@@ -70,6 +92,8 @@ export class TerrainModel {
   private roadSegs: Seg[] = [];
   private riverTileCenters: { x: number; z: number }[] = [];
   private bridgeMap = new Map<number, Bridge>();
+  /** Bridges whose deck overlaps each tile, including the approaches on the banks. */
+  private deckMap = new Map<number, Bridge[]>();
 
   constructor(readonly map: Tile[][]) {
     this.seed = hashString(map.map(r => r.map(t => t.terrain[0] + t.terrain[1]).join('')).join('|'));
@@ -106,49 +130,49 @@ export class TerrainModel {
     return this.bridgeMap.get(bridgeKey(tx, ty));
   }
 
-  /** Bilinear sample of the terrain surface. */
-  height(x: number, z: number): number {
+  /** Bilinear sample of one of the height-grid fields. */
+  private sampleGrid(arr: Float32Array, x: number, z: number): number {
     const gx = clamp((x - WORLD_MIN) / this.step, 0, this.vn - 1.001);
     const gz = clamp((z - WORLD_MIN) / this.step, 0, this.vn - 1.001);
     const ix = Math.floor(gx), iz = Math.floor(gz);
     const fx = gx - ix, fz = gz - iz;
     const i = iz * this.vn + ix;
-    const h = this.heights;
-    const a = h[i], b = h[i + 1], c = h[i + this.vn], d = h[i + this.vn + 1];
+    const a = arr[i], b = arr[i + 1], c = arr[i + this.vn], d = arr[i + this.vn + 1];
     return (a + (b - a) * fx) * (1 - fz) + (c + (d - c) * fx) * fz;
   }
 
-  /** Walkable height: bridge decks override the river bed beneath them. */
+  /** Bilinear sample of the terrain surface. */
+  height(x: number, z: number): number {
+    return this.sampleGrid(this.heights, x, z);
+  }
+
+  /** The bridge whose deck covers a point (grown by `pad`), if any. */
+  deckAt(x: number, z: number, pad = 0): Bridge | undefined {
+    const list = this.deckMap.get(bridgeKey(Math.floor(x / TILE), Math.floor(z / TILE)));
+    if (!list) return undefined;
+    for (const b of list) {
+      const s = b.axis === 'x' ? x : z, c = b.axis === 'x' ? z : x;
+      if (s >= b.a0 - pad && s <= b.a1 + pad && Math.abs(c - b.across) <= BRIDGE_WIDTH / 2 + pad) return b;
+    }
+    return undefined;
+  }
+
+  /** Walkable height: bridge decks override the river and banks beneath them. */
   ground(x: number, z: number): number {
-    const tx = Math.floor(x / TILE), ty = Math.floor(z / TILE);
-    const b = this.bridgeMap.get(bridgeKey(tx, ty));
     const h = this.height(x, z);
-    if (!b) return h;
-    const lx = x - (tx + 0.5) * TILE, lz = z - (ty + 0.5) * TILE;
-    const across = b.axis === 'x' ? lz : lx;
-    if (Math.abs(across) > BRIDGE_WIDTH / 2) return h;
-    const along = (b.axis === 'x' ? lx : lz) / (TILE * 0.5);
-    return Math.max(h, b.deck + 0.05 * (1 - along * along));
+    const b = this.deckAt(x, z);
+    return b ? Math.max(h, deckHeight(b, b.axis === 'x' ? x : z)) : h;
   }
 
   /** Keeps a point on a bridge deck from stepping off the side into the river. */
   confine(x: number, z: number, out: { x: number; z: number }) {
     out.x = x; out.z = z;
-    const tx = Math.floor(x / TILE), ty = Math.floor(z / TILE);
-    const b = this.bridgeMap.get(bridgeKey(tx, ty));
+    const b = this.bridgeMap.get(bridgeKey(Math.floor(x / TILE), Math.floor(z / TILE)));
     if (!b) return out;
-    const cx = (tx + 0.5) * TILE, cz = (ty + 0.5) * TILE;
     const lim = BRIDGE_WIDTH / 2 - 0.1;
-    if (b.axis === 'x') out.z = clamp(z, cz - lim, cz + lim);
-    else out.x = clamp(x, cx - lim, cx + lim);
+    if (b.axis === 'x') out.z = clamp(z, b.across - lim, b.across + lim);
+    else out.x = clamp(x, b.across - lim, b.across + lim);
     return out;
-  }
-
-  /** River depth factor (0 = dry, 1 = channel core) at a world point. */
-  riverDepthAt(x: number, z: number) {
-    const gx = Math.round(clamp((x - WORLD_MIN) / this.step, 0, this.vn - 1));
-    const gz = Math.round(clamp((z - WORLD_MIN) / this.step, 0, this.vn - 1));
-    return this.river[gz * this.vn + gx];
   }
 
   /** Index helpers for the height grid. */
@@ -277,8 +301,11 @@ export class TerrainModel {
     // Extend the river beyond the map in both directions.
     const rng = makeRng(this.seed ^ 0xa11ce);
     const extend = (startRow: number, dir: number, firstRowAtEdge: number) => {
+      // Leave from the river tile nearest the row's middle, never from a dry tile between
+      // two channels: carving through that would leave it under water.
       const xs = rows[startRow];
-      let x = xs.reduce((a, b) => a + b, 0) / xs.length;
+      const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
+      let x = xs.reduce((best, v) => (Math.abs(v - mean) < Math.abs(best - mean) ? v : best));
       let y = startRow;
       const pts = [c(x, y)];
       const steps = Math.abs(firstRowAtEdge - startRow) + BORDER + 2;
@@ -461,19 +488,78 @@ export class TerrainModel {
   }
 
   private findBridges() {
+    const half = BRIDGE_WIDTH / 2;
+    const offsets = [-half, 0, half];
+    const at = (axis: 'x' | 'z', s: number, c: number): [number, number] => (axis === 'x' ? [s, c] : [c, s]);
+    // Any part of the deck's width still over the channel?
+    const wet = (axis: 'x' | 'z', s: number, c: number) =>
+      offsets.some(o => this.sampleGrid(this.river, ...at(axis, s, c + o)) > 0.12);
+    // March out from a point in the river until the whole deck width is over the bank,
+    // then carry on a little so the abutment beds into it.
+    const landing = (axis: 'x' | 'z', start: number, dir: number, c: number) => {
+      let d = 0;
+      while (d < BRIDGE_REACH && wet(axis, start + dir * d, c)) d += 0.05;
+      return start + dir * (d + 0.2);
+    };
+
+    // 1. Which tiles need a bridge, and which way it runs. Roads cross along x, so a
+    //    road tile keeps that unless crossing the other way is much shorter.
+    const axisOf = new Map<number, 'x' | 'z'>();
     for (let ty = 0; ty < MAP_N; ty++) {
       for (let tx = 0; tx < MAP_N; tx++) {
-        const t = this.map[ty][tx].terrain;
-        if (t === 'river') continue;
+        if (this.map[ty][tx].terrain === 'river') continue;
         const cx = (tx + 0.5) * TILE, cz = (ty + 0.5) * TILE;
-        if (this.riverDepthAt(cx, cz) < 0.5) continue;
-        // Bridge spans perpendicular to the flow: compare channel extent along each axis.
-        const dzN = this.riverDepthAt(cx, cz - TILE * 0.45) + this.riverDepthAt(cx, cz + TILE * 0.45);
-        const dxE = this.riverDepthAt(cx - TILE * 0.45, cz) + this.riverDepthAt(cx + TILE * 0.45, cz);
-        const axis: 'x' | 'z' = dzN >= dxE ? 'x' : 'z';
-        const b: Bridge = { tx, ty, axis, deck: 0.12 + hash2(tx, ty, this.seed) * 0.02 };
+        if (this.sampleGrid(this.river, cx, cz) < 0.5) continue;
+        const lenX = landing('x', cx, 1, cz) - landing('x', cx, -1, cz);
+        const lenZ = landing('z', cz, 1, cx) - landing('z', cz, -1, cx);
+        const bias = this.map[ty][tx].terrain === 'road' ? 0.75 : 1;
+        axisOf.set(bridgeKey(tx, ty), lenX * bias <= lenZ ? 'x' : 'z');
+      }
+    }
+
+    // 2. Neighbouring tiles crossing the same way share one bridge.
+    const done = new Set<number>();
+    for (let ty = 0; ty < MAP_N; ty++) {
+      for (let tx = 0; tx < MAP_N; tx++) {
+        const axis = axisOf.get(bridgeKey(tx, ty));
+        if (!axis || done.has(bridgeKey(tx, ty))) continue;
+        const tiles: { tx: number; ty: number }[] = [];
+        for (let ux = tx, uy = ty; axisOf.get(bridgeKey(ux, uy)) === axis && !done.has(bridgeKey(ux, uy));) {
+          tiles.push({ tx: ux, ty: uy });
+          done.add(bridgeKey(ux, uy));
+          if (axis === 'x') ux++; else uy++;
+        }
+        const first = tiles[0], last = tiles[tiles.length - 1];
+        const along = (t: { tx: number; ty: number }) => ((axis === 'x' ? t.tx : t.ty) + 0.5) * TILE;
+        const across = ((axis === 'x' ? first.ty : first.tx) + 0.5) * TILE;
+        const a0 = landing(axis, along(first), -1, across);
+        const a1 = landing(axis, along(last), 1, across);
+        // Landings sit just on top of the highest ground under the deck's width.
+        const bank = (s: number) => Math.max(...offsets.map(o => this.height(...at(axis, s, across + o)))) + 0.015;
+        const h0 = bank(a0), h1 = bank(a1);
+        let w0 = Infinity, w1 = -Infinity;
+        for (let s = a0; s <= a1; s += 0.05) {
+          if (this.height(...at(axis, s, across)) < WATER_LEVEL + 0.02) {
+            w0 = Math.min(w0, s);
+            w1 = Math.max(w1, s);
+          }
+        }
+        if (w0 > w1) { w0 = a0 + 0.4; w1 = a1 - 0.4; }
+        const peak = Math.max(0.15 + hash2(tx, ty, this.seed) * 0.02 + 0.012 * (a1 - a0), Math.max(h0, h1) + 0.06);
+        const b: Bridge = { tiles, axis, across, a0, a1, h0, h1, peak, w0, w1 };
         this.bridges.push(b);
-        this.bridgeMap.set(bridgeKey(tx, ty), b);
+        for (const t of tiles) this.bridgeMap.set(bridgeKey(t.tx, t.ty), b);
+        // Index every tile the deck (plus a margin) overlaps, for ground() lookups.
+        const pad = 0.5;
+        const s0 = Math.floor((a0 - pad) / TILE), s1 = Math.floor((a1 + pad) / TILE);
+        const c0 = Math.floor((across - half - pad) / TILE), c1 = Math.floor((across + half + pad) / TILE);
+        for (let si = s0; si <= s1; si++) {
+          for (let ci = c0; ci <= c1; ci++) {
+            const key = axis === 'x' ? bridgeKey(si, ci) : bridgeKey(ci, si);
+            const list = this.deckMap.get(key);
+            if (list) list.push(b); else this.deckMap.set(key, [b]);
+          }
+        }
       }
     }
   }

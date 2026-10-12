@@ -8,7 +8,7 @@ import * as P from '../models/propModels';
 import { buildGun, buildHorseBody, buildHorseLeg, buildWheel, HORSE_LEGS, HORSE_LEG_TOP, WHEEL_R, WHEEL_X } from '../models/unitModels';
 import { makeBannerTexture, makeFlagMesh } from '../models/flags';
 import { Obstacles } from './obstacles';
-import { TerrainModel } from './TerrainModel';
+import { TerrainModel, deckHeight } from './TerrainModel';
 
 export const swayUniforms = { uTime: { value: 0 } };
 
@@ -148,8 +148,9 @@ export class Scenery {
     return arr[gz * m.vn + gx];
   }
 
+  /** Dry ground with nothing built on it: not in the river and not on a bridge or its approach. */
   private dry(x: number, z: number, margin = 0.05) {
-    return this.model.height(x, z) > WATER_LEVEL + margin;
+    return this.model.height(x, z) > WATER_LEVEL + margin && !this.model.deckAt(x, z, 0.25);
   }
 
   // -- vegetation ------------------------------------------------------------
@@ -461,9 +462,14 @@ export class Scenery {
   private placeBridges() {
     const m = this.model;
     for (const b of m.bridges) {
-      const { x, z } = tileCenter(b.tx, b.ty);
-      const geo = P.buildStoneBridge(TILE, BRIDGE_WIDTH, b.deck);
-      this.single(geo, x, 0, z, b.axis === 'x' ? 0 : Math.PI / 2);
+      const mid = (b.a0 + b.a1) / 2;
+      const geo = P.buildStoneBridge({
+        x0: b.a0 - mid, x1: b.a1 - mid, w0: b.w0 - mid, w1: b.w1 - mid,
+        width: BRIDGE_WIDTH, deck: x => deckHeight(b, mid + x),
+      });
+      // Local +X runs along the bridge: world +X, or world +Z after a -90° turn.
+      if (b.axis === 'x') this.single(geo, mid, 0, b.across, 0);
+      else this.single(geo, b.across, 0, mid, -Math.PI / 2);
     }
   }
 
