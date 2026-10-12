@@ -47,12 +47,25 @@ export interface GameAnimation {
   timestamp: number;
 }
 
-/** How much the Gemini model reasons before answering. Gemini 3.8 Flash requires one of these. */
+/** Which LLM service plays a general: Google's Gemini or Anthropic's Claude. */
+export type AiProvider = 'gemini' | 'claude';
+
+/**
+ * How much the model reasons before answering. Sent as Gemini's thinking level
+ * (Gemini 3.8 Flash requires one) or as Claude's effort.
+ */
 export type ThinkingLevelSetting = 'low' | 'medium' | 'high';
 
 export interface AiConfig {
+  /** Defaults to Gemini. */
+  provider?: AiProvider;
+  /** Google AI (Gemini) API key. */
   apiKey: string;
+  /** Gemini model. */
   model: string;
+  /** Anthropic API key, from platform.claude.com. */
+  claudeApiKey?: string;
+  claudeModel?: string;
   thinkingLevel?: ThinkingLevelSetting;
   langsmithApiKey?: string;
   langsmithProject?: string;

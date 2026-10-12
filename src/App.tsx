@@ -43,22 +43,16 @@ import {
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
-import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import { Client } from "langsmith";
-import { Regiment, Tile, GameState, UnitType, Facing, GameAnimation, AiConfig, Nation, ThinkingLevelSetting } from './game/types';
-import { getInitialState, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath, resolveAttack, NATIONS, nationOf, nationsFor, GEMINI_MODELS, THINKING_LEVELS, resolveAiModel } from './game/engine';
+import { Regiment, Tile, GameState, UnitType, Facing, GameAnimation, AiConfig, AiProvider, Nation, ThinkingLevelSetting } from './game/types';
+import { getInitialState, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath, resolveAttack, NATIONS, nationOf, nationsFor } from './game/engine';
+import { AI_MODELS, AI_PROVIDERS, THINKING_LEVELS, resolveAiModel } from './ai/models';
+import { AiSession, startAiSession } from './ai/session';
 
 // The 3D battlefield (three.js) is code-split so the 2D view stays light.
 const BattlefieldView = lazy(() => import('./three/BattlefieldView'));
 
 /** Team colours follow the army: British red, French blue. Literal class names so Tailwind keeps them. */
-/** Our thinking level setting as the Gemini SDK's enum. */
-const GEMINI_THINKING: Record<ThinkingLevelSetting, ThinkingLevel> = {
-  low: ThinkingLevel.LOW,
-  medium: ThinkingLevel.MEDIUM,
-  high: ThinkingLevel.HIGH,
-};
-
 const SIDE_UI: Record<Nation, {
   text: string; textSoft: string; bubble: string; chip: string; unit: string;
   ring40: string; ring60: string; ring80: string; archive: string; pick: string;
@@ -249,7 +243,7 @@ const AiConfigModal = ({
       <motion.div 
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
-        className="bg-[#E4E3E0] border-2 border-[#141414] p-8 max-w-2xl w-full shadow-2xl flex flex-col gap-6"
+        className="bg-[#E4E3E0] border-2 border-[#141414] p-8 max-w-2xl w-full max-h-full overflow-y-auto shadow-2xl flex flex-col gap-6"
       >
         <div className="flex justify-between items-center border-b border-[#141414] pb-4">
           <h2 className="text-2xl font-bold uppercase tracking-tight">AI General Configuration</h2>
@@ -259,49 +253,68 @@ const AiConfigModal = ({
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          {[1, 2].map(playerNum => (
+          {[1, 2].map(playerNum => {
+            const config = localConfigs[playerNum];
+            const ai = resolveAiModel(config);
+            const update = (patch: Partial<AiConfig>) => setLocalConfigs(prev => ({ ...prev, [playerNum]: { ...prev[playerNum], ...patch } }));
+            return (
             <div key={playerNum} className="space-y-4 p-4 border border-[#141414]/20 bg-white/50">
               <h3 className={cn("font-bold uppercase text-sm border-b border-[#141414] pb-2", SIDE_UI[nations[playerNum]].text)}>Player {playerNum} · {NATIONS[nations[playerNum]].adjective}</h3>
               
               <div className="space-y-1">
-                <label className="text-[10px] uppercase font-bold opacity-60">Gemini API Key</label>
+                <label className="text-[10px] uppercase font-bold opacity-60">AI Provider</label>
+                <div className="grid grid-cols-2 border border-[#141414]" role="radiogroup" aria-label={`Player ${playerNum}'s AI provider`}>
+                  {(['gemini', 'claude'] as AiProvider[]).map(p => (
+                    <button
+                      key={p}
+                      role="radio"
+                      aria-checked={ai.provider === p}
+                      onClick={() => update({ provider: p })}
+                      className={cn(
+                        "p-2 text-left transition-all",
+                        ai.provider === p ? "bg-[#141414] text-[#E4E3E0]" : "bg-white hover:bg-[#141414]/10"
+                      )}
+                    >
+                      <span className="block text-xs font-bold uppercase">{AI_PROVIDERS[p].label}</span>
+                      <span className="block text-[9px] font-mono uppercase opacity-60">{AI_PROVIDERS[p].vendor}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-bold opacity-60">{AI_PROVIDERS[ai.provider].label} API Key</label>
                 <input 
                   type="password"
-                  value={localConfigs[playerNum].apiKey}
-                  onChange={(e) => setLocalConfigs(prev => ({
-                    ...prev,
-                    [playerNum]: { ...prev[playerNum], apiKey: e.target.value }
-                  }))}
-                  placeholder="Paste your key here..."
+                  value={ai.apiKey}
+                  onChange={(e) => update(ai.provider === 'claude' ? { claudeApiKey: e.target.value } : { apiKey: e.target.value })}
+                  placeholder={AI_PROVIDERS[ai.provider].keyPlaceholder}
                   className="w-full p-2 bg-white border border-[#141414] font-mono text-xs focus:ring-1 focus:ring-[#141414] outline-none"
                 />
+                <p className="text-[9px] font-mono opacity-50">{AI_PROVIDERS[ai.provider].keyHint}</p>
               </div>
 
-              <div className="flex items-center gap-2 pt-1">
-                <input 
-                  type="checkbox"
-                  id={`vertex-${playerNum}`}
-                  checked={localConfigs[playerNum].useVertexAI || false}
-                  onChange={(e) => setLocalConfigs(prev => ({
-                    ...prev,
-                    [playerNum]: { ...prev[playerNum], useVertexAI: e.target.checked }
-                  }))}
-                  className="accent-[#141414]"
-                />
-                <label htmlFor={`vertex-${playerNum}`} className="text-[10px] uppercase font-bold opacity-60 cursor-pointer">Use Vertex AI (Google Cloud)</label>
-              </div>
+              {ai.provider === 'gemini' && (
+                <div className="flex items-center gap-2 pt-1">
+                  <input 
+                    type="checkbox"
+                    id={`vertex-${playerNum}`}
+                    checked={config.useVertexAI || false}
+                    onChange={(e) => update({ useVertexAI: e.target.checked })}
+                    className="accent-[#141414]"
+                  />
+                  <label htmlFor={`vertex-${playerNum}`} className="text-[10px] uppercase font-bold opacity-60 cursor-pointer">Use Vertex AI (Google Cloud)</label>
+                </div>
+              )}
 
-              {localConfigs[playerNum].useVertexAI && (
+              {ai.provider === 'gemini' && config.useVertexAI && (
                 <div className="grid grid-cols-2 gap-2">
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-60">Project ID</label>
                     <input 
                       type="text"
-                      value={localConfigs[playerNum].projectId || ''}
-                      onChange={(e) => setLocalConfigs(prev => ({
-                        ...prev,
-                        [playerNum]: { ...prev[playerNum], projectId: e.target.value }
-                      }))}
+                      value={config.projectId || ''}
+                      onChange={(e) => update({ projectId: e.target.value })}
                       placeholder="my-project-id"
                       className="w-full p-2 bg-white border border-[#141414] font-mono text-[10px] focus:ring-1 focus:ring-[#141414] outline-none"
                     />
@@ -310,11 +323,8 @@ const AiConfigModal = ({
                     <label className="text-[10px] uppercase font-bold opacity-60">Location</label>
                     <input 
                       type="text"
-                      value={localConfigs[playerNum].location || ''}
-                      onChange={(e) => setLocalConfigs(prev => ({
-                        ...prev,
-                        [playerNum]: { ...prev[playerNum], location: e.target.value }
-                      }))}
+                      value={config.location || ''}
+                      onChange={(e) => update({ location: e.target.value })}
                       placeholder="us-central1"
                       className="w-full p-2 bg-white border border-[#141414] font-mono text-[10px] focus:ring-1 focus:ring-[#141414] outline-none"
                     />
@@ -325,14 +335,11 @@ const AiConfigModal = ({
               <div className="space-y-1">
                 <label className="text-[10px] uppercase font-bold opacity-60">Model Selection</label>
                 <select 
-                  value={resolveAiModel(localConfigs[playerNum]).model}
-                  onChange={(e) => setLocalConfigs(prev => ({
-                    ...prev,
-                    [playerNum]: { ...prev[playerNum], model: e.target.value }
-                  }))}
+                  value={ai.model}
+                  onChange={(e) => update(ai.provider === 'claude' ? { claudeModel: e.target.value } : { model: e.target.value })}
                   className="w-full p-2 bg-white border border-[#141414] font-mono text-xs focus:ring-1 focus:ring-[#141414] outline-none"
                 >
-                  {GEMINI_MODELS.map(m => (
+                  {AI_MODELS[ai.provider].map(m => (
                     <option key={m.id} value={m.id}>{m.label}</option>
                   ))}
                 </select>
@@ -341,11 +348,8 @@ const AiConfigModal = ({
               <div className="space-y-1">
                 <label className="text-[10px] uppercase font-bold opacity-60">Thinking Level</label>
                 <select
-                  value={resolveAiModel(localConfigs[playerNum]).thinkingLevel}
-                  onChange={(e) => setLocalConfigs(prev => ({
-                    ...prev,
-                    [playerNum]: { ...prev[playerNum], thinkingLevel: e.target.value as ThinkingLevelSetting }
-                  }))}
+                  value={ai.thinkingLevel}
+                  onChange={(e) => update({ thinkingLevel: e.target.value as ThinkingLevelSetting })}
                   className="w-full p-2 bg-white border border-[#141414] font-mono text-xs focus:ring-1 focus:ring-[#141414] outline-none"
                 >
                   {THINKING_LEVELS.map(l => (
@@ -381,12 +385,13 @@ const AiConfigModal = ({
                 />
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
 
         <div className="text-[10px] uppercase opacity-50 font-mono leading-relaxed">
-          * Your API keys are kept in memory only and never saved to any server. 
-          Give each player a different thinking level to see how they compete tactically.
+          * Your API keys are kept in memory only and never saved to any server; requests go straight from this browser to Google or Anthropic.
+          Pit Gemini against Claude, or give each side a different model or thinking level, to see how they compete tactically.
         </div>
 
         <div className="flex gap-4 mt-4">
@@ -1274,10 +1279,9 @@ export default function App() {
 
   const runAiTurn = useCallback(async () => {
     const config = gameState.aiConfigs[gameState.currentPlayer];
-    const { model, thinkingLevel } = resolveAiModel(config);
-    const apiKey = config.apiKey;
+    const { provider, apiKey, model, thinkingLevel } = resolveAiModel(config);
     if (!apiKey) {
-      addBattlefieldLog(`ERROR: API Key for Player ${gameState.currentPlayer} not found. Please configure AI settings.`);
+      addBattlefieldLog(`ERROR: ${AI_PROVIDERS[provider].label} API Key for Player ${gameState.currentPlayer} not found. Please configure AI settings.`);
       setIsAiThinking(false);
       return;
     }
@@ -1288,6 +1292,8 @@ export default function App() {
     // LangSmith tracing setup
     let parentRunId: string | undefined;
     let client: Client | undefined;
+    // Kept outside the try so the error handlers can ask it whether an error was a rate limit.
+    let session: AiSession | undefined;
 
     // Helper for exponential backoff
     const retryWithBackoff = async <T extends unknown>(fn: () => Promise<T>, maxRetries = 3): Promise<T> => {
@@ -1297,8 +1303,7 @@ export default function App() {
           return await fn();
         } catch (error: any) {
           lastError = error;
-          const isRateLimit = error?.message?.includes('429') || error?.status === 429 || JSON.stringify(error).includes('429');
-          if (isRateLimit && i < maxRetries - 1) {
+          if (session?.isRateLimit(error) && i < maxRetries - 1) {
             const delay = Math.pow(2, i) * 2000 + Math.random() * 1000;
             addBattlefieldLog(`AI Player ${gameState.currentPlayer} is hitting rate limits. Retrying in ${Math.round(delay/1000)}s...`);
             await new Promise(resolve => setTimeout(resolve, delay));
@@ -1311,23 +1316,21 @@ export default function App() {
     };
 
     try {
-      const ai = new GoogleGenAI({ 
-        apiKey,
-        vertexai: config.useVertexAI
-      });
       let currentGameState = gameState;
       let turnEnded = false;
       let iteration = 0;
       let turnOutput = "";
 
       // Start a chat session to maintain context across iterations
-      const chat = ai.chats.create({
+      const chat = await startAiSession({
+        provider,
+        apiKey,
         model,
-        config: {
-          systemInstruction: aiInstructions,
-          thinkingConfig: { thinkingLevel: GEMINI_THINKING[thinkingLevel] },
-        },
+        thinkingLevel,
+        systemInstruction: aiInstructions,
+        useVertexAI: config.useVertexAI,
       });
+      session = chat;
 
       if (config.langsmithApiKey) {
         client = new Client({
@@ -1341,6 +1344,7 @@ export default function App() {
           inputs: { 
             turn: currentGameState.turn, 
             player: currentGameState.currentPlayer,
+            provider,
             model,
             thinkingLevel
           },
@@ -1381,9 +1385,9 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
           });
 
           try {
-            response = await retryWithBackoff(() => chat.sendMessage({ message: prompt }));
+            response = await retryWithBackoff(() => chat.send(prompt));
             await client.updateRun(runId, {
-              outputs: { response: response.text },
+              outputs: { response: response.text, ...(response.refusal ? { refusal: response.refusal } : {}) },
               end_time: Date.now()
             });
           } catch (e) {
@@ -1394,7 +1398,17 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
             throw e;
           }
         } else {
-          response = await retryWithBackoff(() => chat.sendMessage({ message: prompt }));
+          response = await retryWithBackoff(() => chat.send(prompt));
+        }
+
+        if (response.refusal) {
+          // The model declined to answer: end its turn rather than retrying the same request.
+          // The note goes into this turn's state, so the forced 'end' below keeps it.
+          const why = response.refusal.category ? ` (${response.refusal.category})` : '';
+          const note = `AI Player ${currentGameState.currentPlayer}'s model declined to answer${why}. Ending its turn.`;
+          currentGameState = { ...currentGameState, battlefieldLogs: [note, ...currentGameState.battlefieldLogs].slice(0, 20) };
+          setGameState(currentGameState);
+          break;
         }
 
         const responseText = response.text;
@@ -1502,8 +1516,7 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
       setTimeout(() => setAiMonologue(null), 3000);
     } catch (error: any) {
       console.error("AI Turn Error:", error);
-      const isRateLimit = error?.message?.includes('429') || error?.status === 429 || JSON.stringify(error).includes('429');
-      if (isRateLimit) {
+      if (session?.isRateLimit(error)) {
         addBattlefieldLog(`CRITICAL: AI Player ${gameState.currentPlayer} hit API rate limits. Please wait a minute before trying again or use a paid API key.`);
       } else {
         addBattlefieldLog("AI encountered an error during its turn.");

@@ -2,7 +2,17 @@
 It's kinda mix of chess and Total War mechanics, you move your Regiments per turn, manage supply and capture points.
 This game specifically made to be playable by Large-Language Model, my purpose is to study LLM tactical awareness and how LLM compete strategically to achieve desired objectives with resource in mind.
 
-The AI generals run on **Gemini 3.8 Flash** (`gemini-3.8-flash`). In *AI Settings* each player also picks a thinking level: Low, Medium (the default) or High. Every request sends a thinking level, because Gemini 3.8 Flash doesn't accept an empty thinking config. Higher levels plan more carefully but take longer per turn.
+# AI Generals
+In *AI Settings*, each player's general runs on **Gemini** (Google) or **Claude** (Anthropic), so you can pit one against the other:
+
+| Provider | Models | Key |
+| :--- | :--- | :--- |
+| Gemini | Gemini 3.8 Flash (`gemini-3.8-flash`) | [Google AI Studio](https://aistudio.google.com), or Vertex AI |
+| Claude | Claude Sonnet 5.5 (`claude-sonnet-5-5`, default), Claude Opus 5.5 (strongest), Claude Haiku 5.5 (fastest and cheapest) | [Claude Platform](https://platform.claude.com) |
+
+Each player also picks a thinking level: Low, Medium (the default) or High. It is sent as Gemini's thinking level, which Gemini 3.8 Flash requires, or as Claude's effort. Higher levels plan more carefully, but turns take longer and cost more.
+
+Requests go straight from the browser to Google or Anthropic, using the player's own key. Because the key sits in the browser, use a dedicated key with a spending limit. On Claude, the game caches the instructions and the turn so far between a turn's requests. If Claude Sonnet 5.5 or Opus 5.5 declines a request, Anthropic's server-side fallback tries another model in the same call. A general whose request is still declined ends its turn, and the battle log says why.
 
 
 # 3D Battlefield
@@ -56,7 +66,7 @@ Regiments is a static single-page app, so it deploys as a small nginx container 
 - `deploy/nginx.conf.template`: SPA fallback, gzip, long-lived caching for fingerprinted `/assets`, and no caching for `index.html`.
 - `cloudbuild.yaml`: build → push to Artifact Registry → deploy to Cloud Run, for continuous deployment.
 
-**API keys stay in the browser.** Players type their Gemini / LangSmith keys into *AI Settings*, and the deployed site never sees them. Don't put keys in a `.env` for the build: Vite inlines `define`d variables into the public JavaScript. `.dockerignore` keeps `.env*` files out of the image anyway.
+**API keys stay in the browser.** Players type their Gemini, Claude and LangSmith keys into *AI Settings*, and the deployed site never sees them. Don't put keys in a `.env` for the build: Vite inlines `define`d variables into the public JavaScript. `.dockerignore` keeps `.env*` files out of the image anyway.
 
 ### One-time setup
 ```bash
