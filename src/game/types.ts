@@ -47,9 +47,13 @@ export interface GameAnimation {
   timestamp: number;
 }
 
+/** How much the Gemini model reasons before answering. Gemini 3.8 Flash requires one of these. */
+export type ThinkingLevelSetting = 'low' | 'medium' | 'high';
+
 export interface AiConfig {
   apiKey: string;
   model: string;
+  thinkingLevel?: ThinkingLevelSetting;
   langsmithApiKey?: string;
   langsmithProject?: string;
   useVertexAI?: boolean;

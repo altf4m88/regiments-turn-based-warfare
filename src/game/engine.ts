@@ -1,4 +1,4 @@
-import { Regiment, UnitType, Tile, GameState, Facing, Nation } from './types';
+import { Regiment, UnitType, Tile, GameState, Facing, Nation, AiConfig, ThinkingLevelSetting } from './types';
 
 const MAP_SIZE = 20;
 
@@ -7,6 +7,26 @@ const getOrdinal = (n: number) => {
   const v = n % 100;
   return n + (s[(v - 20) % 10] || s[v] || s[0]);
 };
+
+/** Gemini models the AI generals can run on. */
+export const GEMINI_MODELS: { id: string; label: string }[] = [
+  { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash' },
+];
+export const DEFAULT_GEMINI_MODEL = GEMINI_MODELS[0].id;
+
+/** Gemini 3.8 Flash rejects an empty thinking config, so a level is always sent. */
+export const THINKING_LEVELS: { id: ThinkingLevelSetting; label: string; hint: string }[] = [
+  { id: 'low', label: 'Low', hint: 'Fastest replies, least deliberation' },
+  { id: 'medium', label: 'Medium', hint: 'Balanced (default)' },
+  { id: 'high', label: 'High', hint: 'Deepest planning, slowest turns' },
+];
+export const DEFAULT_THINKING_LEVEL: ThinkingLevelSetting = 'medium';
+
+/** The model and thinking level a config will actually run with. Falls back to the defaults for retired models. */
+export const resolveAiModel = (config: Pick<AiConfig, 'model' | 'thinkingLevel'>) => ({
+  model: GEMINI_MODELS.some(m => m.id === config.model) ? config.model : DEFAULT_GEMINI_MODEL,
+  thinkingLevel: THINKING_LEVELS.some(l => l.id === config.thinkingLevel) ? config.thinkingLevel! : DEFAULT_THINKING_LEVEL,
+});
 
 export const NATIONS: Record<Nation, { name: string; adjective: string }> = {
   british: { name: 'Britain', adjective: 'British' },
@@ -315,8 +335,8 @@ export const getInitialState = (nations: { [player: number]: Nation } = DEFAULT_
     cliHistory: [],
     gameMode: null,
     aiConfigs: {
-      1: { apiKey: '', model: 'gemini-3-flash-preview', langsmithApiKey: '', langsmithProject: 'regiments-p1' },
-      2: { apiKey: '', model: 'gemini-3-flash-preview', langsmithApiKey: '', langsmithProject: 'regiments-p2' }
+      1: { apiKey: '', model: DEFAULT_GEMINI_MODEL, thinkingLevel: DEFAULT_THINKING_LEVEL, langsmithApiKey: '', langsmithProject: 'regiments-p1' },
+      2: { apiKey: '', model: DEFAULT_GEMINI_MODEL, thinkingLevel: DEFAULT_THINKING_LEVEL, langsmithApiKey: '', langsmithProject: 'regiments-p2' }
     },
     monologueHistory: [],
     nations: { ...nations }

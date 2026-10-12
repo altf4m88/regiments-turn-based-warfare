@@ -43,15 +43,22 @@ import {
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import { Client } from "langsmith";
-import { Regiment, Tile, GameState, UnitType, Facing, GameAnimation, AiConfig, Nation } from './game/types';
-import { getInitialState, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath, resolveAttack, NATIONS, nationOf, nationsFor } from './game/engine';
+import { Regiment, Tile, GameState, UnitType, Facing, GameAnimation, AiConfig, Nation, ThinkingLevelSetting } from './game/types';
+import { getInitialState, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath, resolveAttack, NATIONS, nationOf, nationsFor, GEMINI_MODELS, THINKING_LEVELS, resolveAiModel } from './game/engine';
 
 // The 3D battlefield (three.js) is code-split so the 2D view stays light.
 const BattlefieldView = lazy(() => import('./three/BattlefieldView'));
 
 /** Team colours follow the army: British red, French blue. Literal class names so Tailwind keeps them. */
+/** Our thinking level setting as the Gemini SDK's enum. */
+const GEMINI_THINKING: Record<ThinkingLevelSetting, ThinkingLevel> = {
+  low: ThinkingLevel.LOW,
+  medium: ThinkingLevel.MEDIUM,
+  high: ThinkingLevel.HIGH,
+};
+
 const SIDE_UI: Record<Nation, {
   text: string; textSoft: string; bubble: string; chip: string; unit: string;
   ring40: string; ring60: string; ring80: string; archive: string; pick: string;
@@ -318,28 +325,32 @@ const AiConfigModal = ({
               <div className="space-y-1">
                 <label className="text-[10px] uppercase font-bold opacity-60">Model Selection</label>
                 <select 
-                  value={localConfigs[playerNum].model}
+                  value={resolveAiModel(localConfigs[playerNum]).model}
                   onChange={(e) => setLocalConfigs(prev => ({
                     ...prev,
                     [playerNum]: { ...prev[playerNum], model: e.target.value }
                   }))}
                   className="w-full p-2 bg-white border border-[#141414] font-mono text-xs focus:ring-1 focus:ring-[#141414] outline-none"
                 >
-                  <optgroup label="Gemini 3 Series">
-                    <option value="gemini-3-flash-preview">Gemini 3 Flash (Fast)</option>
-                    <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (Advanced)</option>
-                    <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash Lite (Lite)</option>
-                  </optgroup>
-                  <optgroup label="Gemini 2.5 Series">
-                    <option value="gemini-2.5-flash-latest">Gemini 2.5 Flash (Latest)</option>
-                  </optgroup>
-                  <optgroup label="Gemini 2.0 Series">
-                    <option value="gemini-2.0-flash-exp">Gemini 2.0 Flash (Exp)</option>
-                  </optgroup>
-                  <optgroup label="Gemini 1.5 Series">
-                    <option value="gemini-1.5-pro-latest">Gemini 1.5 Pro (Stable)</option>
-                    <option value="gemini-1.5-flash-latest">Gemini 1.5 Flash (Stable)</option>
-                  </optgroup>
+                  {GEMINI_MODELS.map(m => (
+                    <option key={m.id} value={m.id}>{m.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-bold opacity-60">Thinking Level</label>
+                <select
+                  value={resolveAiModel(localConfigs[playerNum]).thinkingLevel}
+                  onChange={(e) => setLocalConfigs(prev => ({
+                    ...prev,
+                    [playerNum]: { ...prev[playerNum], thinkingLevel: e.target.value as ThinkingLevelSetting }
+                  }))}
+                  className="w-full p-2 bg-white border border-[#141414] font-mono text-xs focus:ring-1 focus:ring-[#141414] outline-none"
+                >
+                  {THINKING_LEVELS.map(l => (
+                    <option key={l.id} value={l.id}>{l.label}: {l.hint}</option>
+                  ))}
                 </select>
               </div>
 
@@ -375,7 +386,7 @@ const AiConfigModal = ({
 
         <div className="text-[10px] uppercase opacity-50 font-mono leading-relaxed">
           * Your API keys are kept in memory only and never saved to any server. 
-          Configure different models for each player to see how they compete tactically.
+          Give each player a different thinking level to see how they compete tactically.
         </div>
 
         <div className="flex gap-4 mt-4">
@@ -1263,6 +1274,7 @@ export default function App() {
 
   const runAiTurn = useCallback(async () => {
     const config = gameState.aiConfigs[gameState.currentPlayer];
+    const { model, thinkingLevel } = resolveAiModel(config);
     const apiKey = config.apiKey;
     if (!apiKey) {
       addBattlefieldLog(`ERROR: API Key for Player ${gameState.currentPlayer} not found. Please configure AI settings.`);
@@ -1310,9 +1322,10 @@ export default function App() {
 
       // Start a chat session to maintain context across iterations
       const chat = ai.chats.create({
-        model: config.model,
+        model,
         config: {
           systemInstruction: aiInstructions,
+          thinkingConfig: { thinkingLevel: GEMINI_THINKING[thinkingLevel] },
         },
       });
 
@@ -1328,7 +1341,8 @@ export default function App() {
           inputs: { 
             turn: currentGameState.turn, 
             player: currentGameState.currentPlayer,
-            model: config.model
+            model,
+            thinkingLevel
           },
           project_name: config.langsmithProject || 'regiments-simulation',
         });
@@ -1422,7 +1436,7 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
         }
 
         if (commands.length > 0) {
-          addBattlefieldLog(`AI Player ${currentGameState.currentPlayer} (${config.model}) is executing commands...`);
+          addBattlefieldLog(`AI Player ${currentGameState.currentPlayer} (${model}, ${thinkingLevel} thinking) is executing commands...`);
           
           let iterationLogs: string[] = [];
           let iterationCli: string[] = [];

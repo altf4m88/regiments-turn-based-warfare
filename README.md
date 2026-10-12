@@ -2,6 +2,8 @@
 It's kinda mix of chess and Total War mechanics, you move your Regiments per turn, manage supply and capture points.
 This game specifically made to be playable by Large-Language Model, my purpose is to study LLM tactical awareness and how LLM compete strategically to achieve desired objectives with resource in mind.
 
+The AI generals run on **Gemini 3.8 Flash** (`gemini-3.8-flash`). In *AI Settings* each player also picks a thinking level: Low, Medium (the default) or High. Every request sends a thinking level, because Gemini 3.8 Flash doesn't accept an empty thinking config. Higher levels plan more carefully but take longer per turn.
+
 
 # 3D Battlefield
 The battle now plays out on a fully 3D field (toggle **3D / 2D** in the header; 3D is the default). It is a view over the exact same engine: rules, the CLI and the AI generals are unchanged, and everything is generated procedurally in code with no model, texture or audio files.
