@@ -30,29 +30,30 @@ This document provides a comprehensive list of commands, their usage, and the ru
 | Command | Usage | Description |
 | :--- | :--- | :--- |
 | `sel` | `sel <id>` | Selects a unit on the map (visual only). |
-| `mv` | `mv <id> <x>:<y>` | Moves a unit to an adjacent tile. Costs MP based on terrain. |
-| `eg` | `eg <id> <targetId>` | Engages (attacks) an enemy unit. Unit must have MP and be in range. |
+| `mv` | `mv <id> <x>:<y>` | Moves a unit to a tile along the cheapest path (several tiles in one command). Costs the path's MP. The unit ends up facing its last step. |
+| `eg` | `eg <id> <targetId>` | Engages (attacks) an enemy unit in range and in its firing arc. Once per unit per turn; costs 1 MP. |
 | `ent` | `ent <id>` | Toggles entrenchment. Entrenching increases defense and costs all remaining MP (min 1); an entrenched unit cannot move. Leaving the earthworks costs 1 MP. |
 | `rtr` | `rtr <id>` | Rotates a unit 90° clockwise. Costs 1 MP. |
 | `rtl` | `rtl <id>` | Rotates a unit 90° counter-clockwise. Costs 1 MP. |
 | `rlt` | `rlt <id>` | Alias for `rtl`. |
+| `rtn` `rte` `rts` `rtw` | `rtn <id>` | Faces a unit north, east, south or west. Costs 1 MP. |
 | `box` | `box <id>` | Toggles Box Formation (Line Infantry only, 1 MP). 360° fire; cavalry deal only 25% damage to it and take full return fire. The square deals half damage to non-cavalry, cannot move, and takes double damage from cannon. |
-| `pal` | `pal <id>` | Toggles Palisades (Cannons only). +Defense, but restricts firing arc. |
-| `spawn` | `spawn <type>` | Spawns a new unit at an adjacent empty tile near your Command Center. |
+| `pal` | `pal <id>` | Toggles Palisades (Cannons only, all remaining MP). +70% defense, but restricts firing to a 90° cone and the gun cannot move or rotate. |
+| `spawn` | `spawn <type>` | Spawns a new unit at an adjacent empty tile near your Command Center. Types: `line_infantry`, `light_infantry`, `cannon`, `hussars`, `chasseurs`. New units get ids like `p1-l7`. |
 
 ---
 
 ## Simple Rules
 
 1.  **Turns**: Players take turns moving and attacking. Each turn, units regain their Maximum Movement Points (MP).
-2.  **Movement**: Units can move to adjacent tiles (up, down, left, right).
-    -   **Grass/Road**: 1 MP (Roads are 0.5 MP if implemented, currently 1 MP).
-    -   **Forest**: 1 MP (provides defense bonus).
+2.  **Movement**: `mv` finds the cheapest path in north, south, east and west steps (no diagonal steps), and cannot pass through any occupied tile. Entering a tile costs:
+    -   **Road**: 0.5 MP.
+    -   **Grass, Forest, Village and the objectives**: 1 MP.
     -   **Mountain (Hill)**: 2 MP.
     -   **River**: 3 MP.
 3.  **Combat**:
     -   Units have a **Firing Line** (facing). Line Infantry can only shoot forward.
-    -   **Flanking**: Attacking a unit from the side or rear deals 50% more damage.
+    -   **Rear Attacks**: Attacking a unit from behind its facing deals 50% more damage. Side attacks get no bonus.
     -   **Cavalry**: Devastating against Light Infantry in the open and Line Infantry flanks.
     -   **Cannons**: Long range, but weak at close range (adjacent). Deal double damage to units in Box Formation.
     -   **Squares**: Cavalry deal only 25% damage to Line Infantry in Box Formation and take full return fire; the square's own fire is halved against everything except cavalry.
@@ -61,8 +62,9 @@ This document provides a comprehensive list of commands, their usage, and the ru
     -   Earn +25 Supply per turn for each **Supply Node** held.
     -   Spawning units costs Supply.
 5.  **Winning**:
-    -   **Capture Point**: Hold the center point for 5 consecutive turns.
-    -   **Annihilation**: Capture the enemy's Command Center.
+    -   **Capture Point**: Capture the center point and keep it for 5 of your turns. It stays yours until an enemy unit steps onto it.
+    -   **Command Center**: Move any unit onto the enemy's Command Center.
+    -   **Annihilation**: Destroy every enemy regiment.
 
 ---
 

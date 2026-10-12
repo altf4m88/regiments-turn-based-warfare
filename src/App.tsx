@@ -46,7 +46,7 @@ import { twMerge } from 'tailwind-merge';
 
 import { Client } from "langsmith";
 import { Regiment, Tile, GameState, UnitType, Facing, GameAnimation, AiConfig, AiProvider, Nation, ThinkingLevelSetting } from './game/types';
-import { getInitialState, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath, resolveAttack, NATIONS, nationOf, nationsFor } from './game/engine';
+import { getInitialState, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath, resolveAttack, nextRegimentId, parseUnitType, NATIONS, nationOf, nationsFor } from './game/engine';
 import { AI_MODELS, AI_PROVIDERS, THINKING_LEVELS, resolveAiModel } from './ai/models';
 import { AiSession, startAiSession } from './ai/session';
 import { Markdown, plainText } from './ui/Markdown';
@@ -508,6 +508,21 @@ export default function App() {
     stateStr += `Current Player: Player ${state.currentPlayer}\n`;
     stateStr += `Supply: P1: ${state.supply[1]}, P2: ${state.supply[2]}\n`;
     stateStr += `Capture Point (10:10): ${state.capturePointOwner ? `Owned by P${state.capturePointOwner} (${state.capturePointTurns}/5 turns)` : 'Uncaptured'}\n\n`;
+
+    // Objectives and terrain, so a general never has to spend an iteration on reconnaissance.
+    const tiles = state.map.flat();
+    const at = (t: Tile) => `${t.x}:${t.y}`;
+    stateStr += `--- OBJECTIVES ---\n`;
+    stateStr += `Command Centers (move any regiment onto the enemy's to win at once): ${tiles.filter(t => t.terrain === 'command_center').map(t => `P${t.owner} at ${at(t)}`).join(', ')}\n`;
+    stateStr += `Supply Nodes (+${SUPPLY_NODE_BONUS} supply per turn each to the owner; move onto one to take it): ${tiles.filter(t => t.terrain === 'supply_node').map(t => `${at(t)} (${t.owner ? `P${t.owner}` : 'neutral'})`).join(', ') || 'none'}\n\n`;
+    const glyph: Partial<Record<Tile['terrain'], string>> = { grass: '.', road: '=', forest: 'F', mountain: 'H', river: '~', buildings: 'B', supply_node: 'S', capture_point: 'X' };
+    stateStr += `--- MAP (x = column 0-19 west to east, y = row 0-19 north to south) ---\n`;
+    stateStr += `Legend: . open field, = road (0.5 MP), F forest, H hills (2 MP), ~ river (3 MP), B village, S supply node, X capture point, 1/2 command centers\n`;
+    stateStr += `      ${'0'.repeat(10)}${'1'.repeat(10)}\n      ${'0123456789'.repeat(2)}\n`;
+    state.map.forEach((row, y) => {
+      stateStr += `y=${String(y).padStart(2)}  ${row.map(t => (t.terrain === 'command_center' ? String(t.owner ?? '?') : glyph[t.terrain] ?? '?')).join('')}\n`;
+    });
+    stateStr += `\n`;
     
     stateStr += `--- REGIMENTS ---\n`;
     state.regiments.forEach(r => {
@@ -880,7 +895,7 @@ export default function App() {
       return;
     }
 
-    const newId = `${gameState.currentPlayer}-${type}-${Date.now()}`;
+    const { id: newId, idCounters } = nextRegimentId(gameState, gameState.currentPlayer, type);
     const index = gameState.regiments.filter(r => r.owner === gameState.currentPlayer && r.type === type).length;
     const newUnit = createInitialRegiment(newId, type, gameState.currentPlayer, emptyNeighbor.x, emptyNeighbor.y, index, undefined, nationOf(gameState, gameState.currentPlayer));
     
@@ -894,7 +909,8 @@ export default function App() {
         ...prev.supply,
         [prev.currentPlayer]: prev.supply[prev.currentPlayer] - cost
       },
-      regiments: [...prev.regiments, newUnit]
+      regiments: [...prev.regiments, newUnit],
+      idCounters
     }));
 
     addBattlefieldLog(`Reinforcements arrived: ${newUnit.name} at (${emptyNeighbor.x}, ${emptyNeighbor.y}).`);
@@ -1071,14 +1087,9 @@ export default function App() {
 
       if (action === 'spawn') {
         const typeInput = parts.slice(1).join('_');
-        let type = typeInput as UnitType;
-        
-        // Handle common variations
-        if (typeInput === 'line' || typeInput === 'line_infantry') type = 'line_infantry';
-        if (typeInput === 'light' || typeInput === 'light_infantry') type = 'light_infantry';
-        
+        const type = parseUnitType(typeInput);
+        if (!type) { error = `Invalid unit type: ${typeInput}. Use: line_infantry, light_infantry, cannon, hussars or chasseurs.`; break; }
         const cost = UNIT_COSTS[type];
-        if (!cost) { error = `Invalid unit type: ${typeInput}. Use: line infantry, light infantry, hussars, chasseurs, or cannon.`; break; }
         if (currentState.supply[currentState.currentPlayer] < cost) { error = `Insufficient supply. Need ${cost}.`; break; }
         
         let cc: Tile | null = null;
@@ -1089,7 +1100,8 @@ export default function App() {
         const emptyNeighbor = neighbors.find(n => n.x >= 0 && n.x < 20 && n.y >= 0 && n.y < 20 && !currentState.regiments.some(r => r.x === n.x && r.y === n.y) && currentState.map[n.y][n.x].terrain !== 'river' && currentState.map[n.y][n.x].terrain !== 'mountain');
         if (!emptyNeighbor) { error = "No space around CC."; break; }
 
-        const newId = `${currentState.currentPlayer}-${type}-${Date.now()}`;
+        const { id: newId, idCounters } = nextRegimentId(currentState, currentState.currentPlayer, type);
+        currentState.idCounters = idCounters;
         const index = currentState.regiments.filter(r => r.owner === currentState.currentPlayer && r.type === type).length;
         const newUnit = createInitialRegiment(newId, type, currentState.currentPlayer, emptyNeighbor.x, emptyNeighbor.y, index, undefined, nationOf(currentState, currentState.currentPlayer));
         newUnit.mp = 0; newUnit.hasAttacked = true;
@@ -1223,6 +1235,10 @@ export default function App() {
             currentState.animations.push({ id: Math.random().toString(36).substr(2, 9), timestamp, type: 'damage', fromX: unit.x, fromY: unit.y, damage: actualCounterDamage });
           }
 
+          // Wiping out an army wins, as it does for attacks made from the UI.
+          if (!currentState.regiments.some(r => r.owner === 1)) currentState.winner = 2;
+          else if (!currentState.regiments.some(r => r.owner === 2)) currentState.winner = 1;
+
           localAddBattlefieldLog(`[${unit.id}] engaged [${target.id}]. Casualties: Enemy ${actualDamage}, Own ${actualCounterDamage}`);
           if (target.isBoxFormation && (unit.type === 'hussars' || unit.type === 'chasseurs')) {
             localAddBattlefieldLog(`[${target.id}]'s square holds firm against the cavalry!`);
@@ -1261,6 +1277,7 @@ export default function App() {
         case 'rts':
         case 'rtw': {
           if (unit.mp < 1) { error = "Insufficient MP."; break; }
+          if (unit.isPalisaded) { error = "Unit is palisaded and cannot rotate."; break; }
           const directions: Facing[] = ['north', 'east', 'south', 'west'];
           const currentIndex = directions.indexOf(unit.facing);
           let newFacing: Facing;
@@ -1404,22 +1421,30 @@ export default function App() {
       }
 
       while (!turnEnded && iteration < 5) {
-        const lastMonologues = currentGameState.monologueHistory.slice(-2);
+        // Only this general's own earlier dispatches: the enemy's plans stay secret.
+        const lastMonologues = currentGameState.monologueHistory.filter(m => m.player === currentGameState.currentPlayer).slice(-2);
         const monologueContext = lastMonologues.length > 0 
           ? `\nPREVIOUS STRATEGIC CONTEXT:\n${lastMonologues.map(m => `Turn ${m.turn} (P${m.player}): ${m.text}`).join('\n')}\n`
           : '';
 
+        const lastIteration = iteration === 4;
+        // From the second iteration on, name the regiments that haven't been used yet this turn.
+        const unused = currentGameState.regiments.filter(r =>
+          r.owner === currentGameState.currentPlayer && r.mp === r.maxMp && !r.hasAttacked && !r.isEntrenched && !r.isPalisaded);
+        const unusedNote = iteration === 0 ? '' : unused.length
+          ? `\nRegiments that have not moved or fought yet this turn: ${unused.map(r => `${r.id} (${r.mp} MP)`).join(', ')}.`
+          : '\nEvery regiment has acted this turn.';
         const prompt = `
 ${monologueContext}
-
-${turnOutput ? `\nRESULTS OF YOUR PREVIOUS ACTIONS THIS TURN:\n${turnOutput}\n` : ''}
-
+${turnOutput ? `\nRESULTS OF YOUR COMMANDS SO FAR THIS TURN:\n${turnOutput}\n` : ''}
 CURRENT GAME STATE:
 ${getGameStateString(currentGameState)}
 
-You are Player ${currentGameState.currentPlayer}. This is iteration ${iteration + 1} of 5 for your turn.
-Analyze the situation and provide your commands.
-IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you have no more actions to take. If this is your 5th iteration, you MUST issue 'end'.
+You are Player ${currentGameState.currentPlayer} (${NATIONS[nationOf(currentGameState, currentGameState.currentPlayer)].adjective}). Turn ${currentGameState.turn}, iteration ${iteration + 1} of 5.
+Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE code block with your commands.
+- The commands run in order, and you will see their results in the next iteration.
+- Every regiment's MP refills each turn, and MP you leave unused is lost.
+- \`end\` ends your turn at once and any command after it is ignored. ${lastIteration ? 'This is your last iteration: finish with `end`.' : 'Add it as the last command only once every regiment has done what you want this turn.'}${unusedNote}
 `;
 
         let response;

@@ -98,4 +98,6 @@ export interface GameState {
   aiConfigs: { [key: number]: AiConfig };
   monologueHistory: MonologueEntry[];
   nations: { [player: number]: Nation };
+  /** Highest number handed out per id prefix ("p1-l": 7), so reinforcement ids are never reused. */
+  idCounters?: Record<string, number>;
 }

@@ -9,6 +9,35 @@ const getOrdinal = (n: number) => {
   return n + (s[(v - 20) % 10] || s[v] || s[0]);
 };
 
+/** Id prefixes per unit type, as in the starting regiments (p1-l1, p2-li2, p1-c1, p2-h1, p1-ch1). */
+const ID_PREFIX: Record<UnitType, string> = { line_infantry: 'l', light_infantry: 'li', cannon: 'c', hussars: 'h', chasseurs: 'ch' };
+
+/**
+ * A short id for a new regiment in the same style as the starting ones (p1-l7),
+ * never reusing one a destroyed regiment had.
+ */
+export const nextRegimentId = (state: Pick<GameState, 'regiments' | 'idCounters'>, owner: number, type: UnitType) => {
+  const prefix = `p${owner}-${ID_PREFIX[type]}`;
+  const used = Math.max(
+    state.idCounters?.[prefix] ?? 0,
+    ...state.regiments.map(r => (r.id.startsWith(prefix) ? Number(r.id.slice(prefix.length)) || 0 : 0)),
+  );
+  return { id: `${prefix}${used + 1}`, idCounters: { ...state.idCounters, [prefix]: used + 1 } };
+};
+
+/** Spawn names the CLI accepts, mapped to unit types. */
+export const parseUnitType = (input: string): UnitType | null => {
+  const t = input.trim().toLowerCase().replace(/[\s-]+/g, '_');
+  const aliases: Record<string, UnitType> = {
+    line: 'line_infantry', line_infantry: 'line_infantry',
+    light: 'light_infantry', light_infantry: 'light_infantry',
+    cannon: 'cannon', cannons: 'cannon', artillery: 'cannon',
+    hussar: 'hussars', hussars: 'hussars',
+    chasseur: 'chasseurs', chasseurs: 'chasseurs',
+  };
+  return aliases[t] ?? null;
+};
+
 export const NATIONS: Record<Nation, { name: string; adjective: string }> = {
   british: { name: 'Britain', adjective: 'British' },
   french: { name: 'France', adjective: 'French' },
@@ -320,7 +349,13 @@ export const getInitialState = (nations: { [player: number]: Nation } = DEFAULT_
       2: { provider: 'gemini', apiKey: '', model: DEFAULT_MODELS.gemini, claudeApiKey: '', claudeModel: DEFAULT_MODELS.claude, thinkingLevel: DEFAULT_THINKING_LEVEL, langsmithApiKey: '', langsmithProject: 'regiments-p2' }
     },
     monologueHistory: [],
-    nations: { ...nations }
+    nations: { ...nations },
+    // Start numbering reinforcements after the starting regiments, so no id is ever reused.
+    idCounters: regiments.reduce<Record<string, number>>((acc, r) => {
+      const m = /^(p\d+-[a-z]+?)(\d+)$/.exec(r.id);
+      if (m) acc[m[1]] = Math.max(acc[m[1]] ?? 0, Number(m[2]));
+      return acc;
+    }, {}),
   };
 };
 
