@@ -25,3 +25,178 @@
 ::-webkit-scrollbar-thumb {
   background: #141414;
 }
+
+/* ---- 3D battlefield ---------------------------------------------------- */
+.bf-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  outline: none;
+  touch-action: none;
+  cursor: default;
+}
+
+.bf-labels {
+  position: absolute !important;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.rg-label {
+  --team: #2563eb;
+  pointer-events: auto;
+  cursor: pointer;
+  min-width: 44px;
+  padding: 1px 3px 2px;
+  background: rgba(228, 227, 224, 0.88);
+  border: 1px solid #141414;
+  border-left: 3px solid var(--team);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  line-height: 1.15;
+  color: #141414;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  transition: background 0.15s ease, opacity 0.3s ease;
+  white-space: nowrap;
+  margin-top: -6px;
+}
+
+.rg-label::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  width: 1px;
+  height: 5px;
+  background: #141414;
+}
+
+.rg-label:hover,
+.rg-label.hov {
+  background: #fff;
+  z-index: 2;
+}
+
+.rg-label.sel {
+  background: #141414;
+  color: #e4e3e0;
+  border-color: #facc15;
+  border-left-color: var(--team);
+  box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.6), 0 2px 8px rgba(0, 0, 0, 0.4);
+  z-index: 3;
+}
+
+.rg-label.sel .rg-sub,
+.rg-label.hov .rg-sub,
+.rg-label:hover .rg-sub {
+  display: flex;
+}
+
+.rg-full {
+  display: none;
+}
+
+.rg-label.sel .rg-full,
+.rg-label.hov .rg-full,
+.rg-label:hover .rg-full {
+  display: inline;
+}
+
+.rg-label.sel .rg-short,
+.rg-label.hov .rg-short,
+.rg-label:hover .rg-short {
+  display: none;
+}
+
+.rg-label.spent {
+  opacity: 0.6;
+}
+
+.rg-label.dead {
+  opacity: 0.85;
+  background: #141414;
+  color: #fca5a5;
+  border-left-color: #7f1d1d;
+}
+
+.rg-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.rg-ico {
+  color: var(--team);
+  font-size: 9px;
+}
+
+.rg-label.sel .rg-ico {
+  color: #facc15;
+}
+
+.rg-st {
+  margin-left: auto;
+  letter-spacing: 1px;
+}
+
+.rg-bar {
+  height: 3px;
+  margin: 2px 0 1px;
+  background: rgba(20, 20, 20, 0.18);
+}
+
+.rg-bar i {
+  display: block;
+  height: 100%;
+  background: var(--team);
+}
+
+.rg-sub {
+  display: none;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 8px;
+  opacity: 0.75;
+}
+
+.rg-pop {
+  pointer-events: none;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 15px;
+  color: #b91c1c;
+  text-shadow: 0 1px 0 #fff, 0 0 6px rgba(255, 255, 255, 0.8);
+  animation: rg-rise 1.9s ease-out forwards;
+}
+
+.rg-pop.routed {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 18px;
+  color: #141414;
+  letter-spacing: 0.06em;
+}
+
+@keyframes rg-rise {
+  0% { transform: translateY(6px) scale(0.6); opacity: 0; }
+  12% { transform: translateY(0) scale(1.15); opacity: 1; }
+  70% { opacity: 1; }
+  100% { transform: translateY(-34px) scale(1); opacity: 0; }
+}
+
+.bf-turn-banner {
+  transform: translateX(-50%);
+  padding: 10px 28px 12px;
+  background: linear-gradient(90deg, transparent, rgba(20, 20, 20, 0.82) 18%, rgba(20, 20, 20, 0.82) 82%, transparent);
+  animation: bf-banner 2.6s ease-in-out forwards;
+}
+
+@keyframes bf-banner {
+  0% { opacity: 0; letter-spacing: 0.08em; }
+  15% { opacity: 1; letter-spacing: 0; }
+  80% { opacity: 1; }
+  100% { opacity: 0; }
+}

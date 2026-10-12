@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Shield, 
@@ -36,7 +36,9 @@ import {
   Terminal,
   Settings,
   Cpu,
-  X
+  X,
+  Box,
+  LayoutGrid
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -45,6 +47,9 @@ import { GoogleGenAI } from "@google/genai";
 import { Client } from "langsmith";
 import { Regiment, Tile, GameState, UnitType, Facing, GameAnimation, AiConfig } from './game/types';
 import { getInitialState, calculateDamage, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath } from './game/engine';
+
+// The 3D battlefield (three.js) is code-split so the 2D view stays light.
+const BattlefieldView = lazy(() => import('./three/BattlefieldView'));
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -384,7 +389,22 @@ export default function App() {
   const [aiInstructions, setAiInstructions] = useState<string>('');
   const [showAiConfig, setShowAiConfig] = useState(false);
   const [isArchiveOpen, setIsArchiveOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<'3d' | '2d'>(() => {
+    try {
+      return localStorage.getItem('regiments.view') === '2d' ? '2d' : '3d';
+    } catch {
+      return '3d';
+    }
+  });
   const aiTurnRef = useRef<{ turn: number, player: number } | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('regiments.view', viewMode);
+    } catch {
+      /* storage unavailable */
+    }
+  }, [viewMode]);
 
   useEffect(() => {
     fetch('/llm_instruction.md')
@@ -511,6 +531,23 @@ export default function App() {
     } else {
       setGameState(prev => ({ ...prev, selectedUnitId: null }));
     }
+  };
+
+  // In 3D, clicking a distant reachable tile marches there via the engine's `mv`
+  // command (same pathfinding and MP rules the CLI and AI generals use).
+  const handleTileClick3D = (x: number, y: number) => {
+    if (!gameState.winner && selectedUnit && selectedUnit.owner === gameState.currentPlayer) {
+      const occupied = gameState.regiments.some(r => r.x === x && r.y === y);
+      const dist = Math.max(Math.abs(selectedUnit.x - x), Math.abs(selectedUnit.y - y));
+      if (!occupied && dist > 1 && !selectedUnit.isBoxFormation && !selectedUnit.isPalisaded) {
+        const route = findPath({ x: selectedUnit.x, y: selectedUnit.y }, { x, y }, selectedUnit, gameState.regiments, gameState.map);
+        if (route && route.cost <= selectedUnit.mp) {
+          executeCommand(`mv ${selectedUnit.id} ${x}:${y}`);
+          return;
+        }
+      }
+    }
+    handleTileClick(x, y);
   };
 
   const performMove = (unit: Regiment, x: number, y: number, cost: number) => {
@@ -1542,7 +1579,7 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
           <h1 className="text-2xl font-bold tracking-tighter uppercase italic font-serif">Regiments</h1>
           <p className="text-[10px] uppercase tracking-widest opacity-50 font-mono">19th Century Warfare Simulation</p>
         </div>
-        <div className="flex gap-8 items-center">
+        <div className="flex gap-4 xl:gap-8 items-center">
           {isAiThinking && (
             <motion.div 
               initial={{ opacity: 0, x: 20 }}
@@ -1553,6 +1590,21 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
               AI Player {gameState.currentPlayer} is processing...
             </motion.div>
           )}
+          <div className="flex border border-[#141414]" role="group" aria-label="Battlefield view">
+            {(['3d', '2d'] as const).map(mode => (
+              <button
+                key={mode}
+                onClick={() => setViewMode(mode)}
+                className={cn(
+                  "px-2.5 py-2 flex items-center gap-1.5 text-[10px] uppercase font-bold tracking-tighter transition-colors",
+                  viewMode === mode ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414]/10"
+                )}
+                title={mode === '3d' ? '3D battlefield' : 'Classic 2D map'}
+              >
+                {mode === '3d' ? <Box size={14} /> : <LayoutGrid size={14} />} {mode.toUpperCase()}
+              </button>
+            ))}
+          </div>
           <div className="flex gap-2 mr-4 border-r border-[#141414]/20 pr-4">
             <button 
               onClick={() => setIsLeftSidebarOpen(!isLeftSidebarOpen)}
@@ -1859,7 +1911,25 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
         </AnimatePresence>
 
         {/* Game Map */}
-        <section className="flex-1 bg-[#D1D0CC] overflow-auto p-12 relative flex flex-col items-center">
+        <section className={cn(
+          "flex-1 relative",
+          viewMode === '3d' ? "overflow-hidden bg-[#c9d2c6]" : "bg-[#D1D0CC] overflow-auto p-12 flex flex-col items-center"
+        )}>
+          {viewMode === '3d' ? (
+            <Suspense fallback={
+              <div className="absolute inset-0 flex items-center justify-center font-mono text-[10px] uppercase tracking-widest opacity-50">
+                Surveying the battlefield…
+              </div>
+            }>
+              <BattlefieldView
+                gameState={gameState}
+                mapRotation={mapRotation}
+                aiMode={gameState.gameMode === 'ai'}
+                onTileClick={handleTileClick3D}
+                onTileHover={setHoveredTile}
+              />
+            </Suspense>
+          ) : (
           <motion.div 
             animate={{ rotate: mapRotation }}
             transition={{ type: 'spring', stiffness: 100, damping: 20 }}
@@ -2020,6 +2090,7 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
               })
             ))}
           </motion.div>
+          )}
 
           <AiConfigModal 
         isOpen={showAiConfig}
