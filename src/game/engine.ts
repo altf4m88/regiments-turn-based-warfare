@@ -3,6 +3,13 @@ import { DEFAULT_MODELS, DEFAULT_THINKING_LEVEL } from '../ai/models';
 
 const MAP_SIZE = 20;
 
+/**
+ * Bump whenever combat, economy or AI rules change, so the leaderboard only compares
+ * battles fought under the same rules. 1: reinforcement prices ×3, bayonet charges,
+ * flank cones, and the Human vs AI roll call.
+ */
+export const RULES_VERSION = 1;
+
 // -- Map codes -----------------------------------------------------------------
 
 /** Letters and digits that cannot be misread for one another (no 0/O, 1/I/L). */
@@ -387,6 +394,7 @@ export const getInitialState = (nations: { [player: number]: Nation } = DEFAULT_
     monologueHistory: [],
     nations: { ...nations },
     seed,
+    startedAt: Date.now(),
     battleId: `${seed}-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`,
     tally: { 1: openingTally(regiments, 1), 2: openingTally(regiments, 2) },
     timeline: [snapshot({ regiments }, 0, 0)],

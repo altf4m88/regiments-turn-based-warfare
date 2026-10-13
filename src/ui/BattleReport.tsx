@@ -1,5 +1,5 @@
 import { ReactNode } from 'react';
-import { Download, Eye, Repeat, RotateCcw, Shuffle } from 'lucide-react';
+import { Download, Eye, Repeat, RotateCcw, Shuffle, Trophy } from 'lucide-react';
 import { NATIONS, nationOf, sideStats, victoryReason, VictoryReason } from '../game/engine';
 import { BattleRecord, generalOf } from '../game/history';
 import { GameState, Nation, Regiment, Tile } from '../game/types';
@@ -94,13 +94,14 @@ const Stat = ({ value, note }: { value: string; note?: string }) => (
 );
 
 /** The end-of-battle report: who won and how, each side's account, strength over time, and earlier battles on this map. */
-export function BattleReport({ state, history, onRematch, onExport, onViewField, onNewCampaign }: {
+export function BattleReport({ state, history, onRematch, onExport, onViewField, onNewCampaign, onOpenRecords }: {
   state: GameState;
   history: BattleRecord[];
   onRematch: (swapSides: boolean) => void;
   onExport: () => void;
   onViewField: () => void;
   onNewCampaign: () => void;
+  onOpenRecords?: () => void;
 }) {
   const winner = state.winner!;
   const reason = victoryReason(state);
@@ -219,6 +220,11 @@ export function BattleReport({ state, history, onRematch, onExport, onViewField,
           <button onClick={onViewField} className="px-4 py-2.5 border border-[#141414] text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0]">
             <Eye size={14} /> View battlefield
           </button>
+          {onOpenRecords && (
+            <button onClick={onOpenRecords} className="px-4 py-2.5 border border-[#141414] text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0]">
+              <Trophy size={14} /> Leaderboard
+            </button>
+          )}
           <button onClick={onNewCampaign} className="ml-auto px-4 py-2.5 border border-[#141414] text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0]">
             <RotateCcw size={14} /> New campaign
           </button>

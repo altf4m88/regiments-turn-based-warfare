@@ -21,6 +21,13 @@ On the start screen, choose the army Player 1 commands (British or French; Playe
 
 From the report you can export it all as JSON (with the generals' dispatches), or start a rematch on the same map. **Rematch, swap sides** gives each general the other army's starting position and turn order while it keeps its own army, which is the fair way to compare two generals on an asymmetric map. Finished battles are kept in this browser.
 
+**Records and leaderboard.** *Records & leaderboard* on the start screen (or *Leaderboard* in a battle report) opens every finished battle kept in this browser, filtered by mode and by rules version. It has three tabs:
+- **Leaderboard**: each general (an AI model at a thinking level, or you) with an Elo rating (everyone starts at 1500), won–lost, swapped-side maps (won from both ends, or split one each), win rates as Player 1 and as Player 2, men lost and killed per battle, and turns to win. Battles with the same general on both sides, including human against human, are not ranked. It also shows how often Player 1, who moves first, wins.
+- **Head to head**: each pair of generals' score and swapped-side maps.
+- **History**: every battle, with a button to replay its map or delete it.
+
+Records only compare battles fought under the current rules (`RULES_VERSION` in `src/game/engine.ts`, bumped whenever combat, economy or AI rules change); switch to *All rules* to include older ones. Nothing leaves your browser: **Export** saves the records as JSON, **Import** merges a file from another browser (battles already present are skipped), and **Clear all** deletes them.
+
 **Pause AI** in the header stops the AI generals once the current turn ends. If an AI general's turn fails, for example because of a missing key, an API error or a rate limit, the battle waits for you: **Retry AI turn** runs it again from where it stopped, and so does saving new settings in *AI Settings*.
 
 # AI Generals

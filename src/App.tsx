@@ -12,6 +12,7 @@ import {
   Shuffle,
   Copy,
   ClipboardList,
+  Trophy,
   EllipsisVertical,
   Move, 
   Users, 
@@ -60,6 +61,7 @@ import { Markdown, plainText } from './ui/Markdown';
 import { BattleReport, CasualtyPanel, MapPreview } from './ui/BattleReport';
 import { BattleRecord, generalOf, loadBattles, recordBattle, saveBattle } from './game/history';
 import { startsCompact, useCompact } from './ui/useCompact';
+import { RecordsView } from './ui/RecordsView';
 
 // The 3D battlefield (three.js) is code-split so the 2D view stays light.
 const BattlefieldView = lazy(() => import('./three/BattlefieldView'));
@@ -565,6 +567,7 @@ export default function App() {
   const [seedInput, setSeedInput] = useState(randomSeed);
   const [reportHidden, setReportHidden] = useState(false);
   const [battleHistory, setBattleHistory] = useState<BattleRecord[]>(loadBattles);
+  const [showRecords, setShowRecords] = useState(false);
   const [isArchiveOpen, setIsArchiveOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'3d' | '2d'>(() => {
     try {
@@ -2074,10 +2077,27 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
             }}
           />
 
+          <button
+            onClick={() => setShowRecords(true)}
+            className="w-full p-3 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex items-center justify-center gap-3 group"
+          >
+            <Trophy size={18} className="group-hover:scale-110 transition-transform" />
+            <span className="text-sm font-bold uppercase">Records &amp; leaderboard</span>
+            <span className="text-[10px] font-mono opacity-60">{battleHistory.length} battle{battleHistory.length === 1 ? '' : 's'}</span>
+          </button>
+
           <div className="border-t border-[#141414]/10 pt-6 text-center">
             <p className="text-[10px] uppercase font-mono opacity-40">Bring your own API keys!</p>
           </div>
         </div>
+        {showRecords && (
+          <RecordsView
+            records={battleHistory}
+            onChange={setBattleHistory}
+            onClose={() => setShowRecords(false)}
+            onPlayMap={seed => { setSeedInput(seed); setShowRecords(false); }}
+          />
+        )}
       </div>
     );
   }
@@ -2793,7 +2813,11 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
               onExport={exportReport}
               onViewField={() => { setReportHidden(true); if (compact) closePanels(); }}
               onNewCampaign={resetGame}
+              onOpenRecords={() => setShowRecords(true)}
             />
+          )}
+          {showRecords && gameState.gameMode !== null && (
+            <RecordsView records={battleHistory} onChange={setBattleHistory} onClose={() => setShowRecords(false)} />
           )}
           {gameState.winner && reportHidden && (
             <button

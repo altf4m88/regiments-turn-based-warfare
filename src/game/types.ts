@@ -143,6 +143,7 @@ export interface GameState {
   seed: string;
   /** Unique per battle, so a finished battle is recorded once. */
   battleId: string;
+  startedAt: number;
   tally: { [player: number]: SideTally };
   timeline: TurnSnapshot[];
   aiConfigs: { [key: number]: AiConfig };
