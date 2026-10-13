@@ -222,7 +222,7 @@ const arm = (b: GeoBuilder, shoulder: V3, elbow: V3, hand: V3, sleeve: string, c
 const L_SH: V3 = [-0.076, SHOULDER_Y, 0];
 const R_SH: V3 = [0.076, SHOULDER_Y, 0];
 
-export type FootPose = 'carry' | 'aim' | 'up' | 'down' | 'hold' | 'beat';
+export type FootPose = 'carry' | 'aim' | 'charge' | 'up' | 'down' | 'hold' | 'beat';
 
 export const buildFootArms = (kind: FootKind, pose: FootPose, n: Nation) => {
   const u = foot(kind, n);
@@ -237,6 +237,11 @@ export const buildFootArms = (kind: FootKind, pose: FootPose, n: Nation) => {
         arm(b, R_SH, [0.105, 0.31, 0.05], [0.05, 0.355, 0.075], sleeve, cuff);
         arm(b, L_SH, [-0.05, 0.31, 0.12], [0.03, 0.36, 0.2], sleeve, cuff);
         musket(b, [0.04, 0.37, -0.01], [MUZZLE.infantry.x, MUZZLE.infantry.y, MUZZLE.infantry.z], bayonet);
+      } else if (pose === 'charge') {
+        // Charge bayonets: butt at the right hip, the point levelled at the enemy's chest.
+        arm(b, R_SH, [0.12, 0.27, -0.035], [0.066, 0.25, 0.03], sleeve, cuff);
+        arm(b, L_SH, [-0.035, 0.27, 0.09], [0.048, 0.285, 0.17], sleeve, cuff);
+        musket(b, [0.072, 0.235, -0.03], [0.03, 0.335, 0.37], bayonet);
       } else {
         arm(b, L_SH, [-0.09, 0.27, 0.012], [-0.075, 0.225, 0.04], sleeve, cuff);
         arm(b, R_SH, [0.088, 0.275, 0.0], [0.083, 0.205, 0.012], sleeve, cuff);

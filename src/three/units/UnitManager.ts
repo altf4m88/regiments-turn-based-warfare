@@ -93,10 +93,15 @@ export class UnitManager {
       if (!attacker) continue;
       const tc = tileCenter(a.toX, a.toY);
       const tpos = target ? target.pos3() : new THREE.Vector3(tc.x, this.model.ground(tc.x, tc.z), tc.z);
-      const impact = attacker.attack(tpos, now, 0, { intoSquare: !!target?.data.isBoxFormation });
+      const impact = attacker.attack(tpos, now, 0, { intoSquare: !!target?.data.isBoxFormation, bayonet: a.bayonet });
       if (target) target.impactAt = Math.max(target.impactAt, impact);
       const counter = damages.some(d => d.fromX === a.fromX && d.fromY === a.fromY);
-      if (counter && target && ids.has(target.id)) {
+      if (a.bayonet) {
+        // Hand to hand: the defender meets the charge with its own bayonets, and both
+        // sides' losses fall at the clash rather than in an exchange of volleys.
+        target?.brace(now, impact);
+        if (counter) attacker.impactAt = Math.max(attacker.impactAt, impact + 0.3);
+      } else if (counter && target && ids.has(target.id)) {
         const back = target.attack(attacker.pos3(), now, Math.max(0, impact - now) + 0.25);
         attacker.impactAt = Math.max(attacker.impactAt, back);
       }

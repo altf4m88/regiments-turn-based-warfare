@@ -54,6 +54,7 @@ This document provides a comprehensive list of commands, their usage, and the ru
 3.  **Combat**:
     -   Units have a **Firing Line** (facing). Line Infantry can only shoot forward.
     -   **Flanking**: Attacking a unit from its side or rear (anywhere outside the 90° cone ahead of its facing) deals 50% more damage.
+    -   **Bayonet Charge**: Line Infantry (not in a square) that engages an adjacent enemy charges instead of firing. Entrenchment and palisades protect neither side, the charge deals +20%, and the defender always fights back at −10% (half that if charged in the flank or rear).
     -   **Cavalry**: Devastating against Light Infantry in the open and Line Infantry flanks.
     -   **Cannons**: Long range, but weak at close range (adjacent). Deal double damage to units in Box Formation.
     -   **Squares**: Cavalry deal only 25% damage to Line Infantry in Box Formation and take full return fire; the square's own fire is halved against everything except cavalry.

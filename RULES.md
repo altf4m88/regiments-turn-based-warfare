@@ -29,7 +29,7 @@ Each unit has unique strengths and tactical roles:
 
 | Unit Type | Role | Men | MP | Range | Special Traits |
 | :--- | :--- | :---: | :---: | :---: | :--- |
-| **Line Infantry** | Main Battle Force | 1000 | 3 | 2 | Fires only ahead, in a lane 3 tiles wide. Can form **Box Formation**. |
+| **Line Infantry** | Main Battle Force | 1000 | 3 | 2 | Fires only ahead, in a lane 3 tiles wide. Charges with the **bayonet** at close quarters. Can form **Box Formation**. |
 | **Light Infantry** | Skirmishers | 600 | 4 | 3 | 360° firing arc. Line Infantry cannot return their fire. |
 | **Cannon** | Artillery | 150 | 2 | 8 | Very long range, but only 30% damage at distance 1. Can build **Palisades**. |
 | **Hussars** | Light Cavalry | 400 | 6 | 1 | Sabre charges. ×2.5 damage vs Light Infantry; take only 40% of return fire. |
@@ -61,6 +61,10 @@ Movement Points (MP) are consumed based on the terrain type:
 *   **Range**: Distance is the larger of the horizontal and vertical gaps, so diagonals count as 1. Ranges are in the table above.
 *   **Damage**: Damage is calculated based on the number of men, attack stats, and the target's effective defense (terrain + entrenchment + palisades, at most 95%).
 *   **Flanking**: A unit's front is the 90° cone ahead of its facing. Attacks from anywhere else, the side or the rear, deal +50% damage (Hussars hitting Line Infantry in the flank deal double). Return fire follows the same rule, so face your target.
+*   **Bayonet Charge**: Line Infantry (not in a square) that attacks an adjacent enemy charges with the bayonet instead of firing a volley.
+    *   **No cover in a melee**: entrenchment and palisades protect neither side. Terrain still counts.
+    *   **Shock**: the charge deals +20% damage, and flanking still applies on top.
+    *   **The defender always fights back**, whatever its facing, at −10%; a regiment charged in the flank or rear (outside its front cone) fights back at half that.
 *   **Zone of Control**: An empty tile between two enemy Line Infantry (left and right, or above and below) cannot be entered by infantry or cannon. Cavalry can pass but lose 15% of their men.
 
 ---
@@ -84,6 +88,7 @@ Movement Points (MP) are consumed based on the terrain type:
 ## 💡 Tactical Tips
 *   **Protect the Flanks**: Line Infantry are vulnerable if the enemy moves outside their narrow firing line.
 *   **Combined Arms**: Use Hussars to hunt down Light Infantry, and Cannons to soften up entrenched positions.
+*   **Storm the Earthworks**: Volleys barely scratch an entrenched line, but a bayonet charge ignores its earthworks. March Line Infantry up to it and charge.
 *   **Squares Invite Shot**: A Box Formation that stops cavalry is a gift to enemy guns. Pin the enemy with Hussars, then let the Cannons fire into the square.
 *   **Supply is Key**: Don't ignore the Supply Nodes in the center; they provide the extra resources needed for a prolonged war.
 *   **The Center Holds**: The Capture Point is the fastest way to win if you can establish a strong defensive perimeter around it.

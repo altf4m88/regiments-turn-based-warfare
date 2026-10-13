@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   Shield, 
   Sword, 
+  Swords,
   Move, 
   Users, 
   ChevronRight, 
@@ -104,6 +105,28 @@ const GameAnimations = ({ animations, mapRotation }: { animations: GameAnimation
                 transition={{ duration: 0.8 }}
                 className="absolute w-8 h-8 -ml-4 -mt-4 rounded-full bg-white/20 blur-md"
               />
+            );
+          }
+
+          if (anim.type === 'attack' && anim.bayonet) {
+            // Bayonet charge: crossed blades rush the enemy and clash on their tile.
+            return (
+              <div key={anim.id} className="absolute pointer-events-none">
+                <motion.div
+                  initial={{ x: fromX, y: fromY, opacity: 1, scale: 0.8, rotate: -mapRotation }}
+                  animate={{ x: toX, y: toY, opacity: [1, 1, 0], scale: [0.8, 1.1, 1.5], rotate: -mapRotation }}
+                  transition={{ duration: 0.7, ease: 'easeIn' }}
+                  className="absolute -ml-4 -mt-4 text-white drop-shadow-[0_0_4px_rgba(0,0,0,0.8)]"
+                >
+                  <Swords size={32} />
+                </motion.div>
+                <motion.div
+                  initial={{ x: toX, y: toY, opacity: 0, scale: 0.4 }}
+                  animate={{ opacity: [0, 0.9, 0], scale: [0.4, 1.6, 2] }}
+                  transition={{ duration: 0.5, delay: 0.55 }}
+                  className="absolute w-10 h-10 -ml-5 -mt-5 rounded-full bg-white/70 blur-sm"
+                />
+              </div>
             );
           }
 
@@ -787,7 +810,7 @@ export default function App() {
   };
 
   const performAttack = (attacker: Regiment, defender: Regiment) => {
-    const { damage: actualDamage, counterDamage: actualCounterDamage } = resolveAttack(attacker, defender, gameState.map);
+    const { damage: actualDamage, counterDamage: actualCounterDamage, bayonet } = resolveAttack(attacker, defender, gameState.map);
 
     setGameState(prev => {
       let newRegiments = prev.regiments.map(r => {
@@ -811,13 +834,15 @@ export default function App() {
       return { ...prev, regiments: newRegiments, winner };
     });
 
-    addAnimation({ type: 'attack', fromX: attacker.x, fromY: attacker.y, toX: defender.x, toY: defender.y, unitType: attacker.type });
+    addAnimation({ type: 'attack', fromX: attacker.x, fromY: attacker.y, toX: defender.x, toY: defender.y, unitType: attacker.type, bayonet });
     addAnimation({ type: 'damage', fromX: defender.x, fromY: defender.y, damage: actualDamage });
     if (actualCounterDamage > 0) {
       addAnimation({ type: 'damage', fromX: attacker.x, fromY: attacker.y, damage: actualCounterDamage });
     }
     
-    addBattlefieldLog(`[${attacker.id}] ${attacker.name} engaged [${defender.id}] ${defender.name}.`);
+    addBattlefieldLog(bayonet
+      ? `[${attacker.id}] ${attacker.name} charged [${defender.id}] ${defender.name} with the bayonet!`
+      : `[${attacker.id}] ${attacker.name} engaged [${defender.id}] ${defender.name}.`);
     addBattlefieldLog(`Casualties - Enemy: ${actualDamage}, Own: ${actualCounterDamage}`);
     
     if (defender.isBoxFormation && (attacker.type === 'hussars' || attacker.type === 'chasseurs')) {
@@ -1252,7 +1277,7 @@ export default function App() {
           if (dist > unit.range) { error = "Out of range."; break; }
           if (!isTargetInFiringLine(unit, target.x, target.y)) { error = "Not in firing line."; break; }
           
-          const { damage: actualDamage, counterDamage: actualCounterDamage } = resolveAttack(unit, target, currentState.map);
+          const { damage: actualDamage, counterDamage: actualCounterDamage, bayonet } = resolveAttack(unit, target, currentState.map);
           
           currentState.regiments = currentState.regiments.map(r => {
             if (r.id === target.id) return { ...r, men: Math.max(0, r.men - actualDamage) };
@@ -1264,7 +1289,7 @@ export default function App() {
           const timestamp = Date.now();
           currentState.animations = [
             ...currentState.animations,
-            { id: Math.random().toString(36).substr(2, 9), timestamp, type: 'attack', fromX: unit.x, fromY: unit.y, toX: target.x, toY: target.y, unitType: unit.type },
+            { id: Math.random().toString(36).substr(2, 9), timestamp, type: 'attack', fromX: unit.x, fromY: unit.y, toX: target.x, toY: target.y, unitType: unit.type, bayonet },
             { id: Math.random().toString(36).substr(2, 9), timestamp, type: 'damage', fromX: target.x, fromY: target.y, damage: actualDamage }
           ];
           if (actualCounterDamage > 0) {
@@ -1275,11 +1300,11 @@ export default function App() {
           if (!currentState.regiments.some(r => r.owner === 1)) currentState.winner = 2;
           else if (!currentState.regiments.some(r => r.owner === 2)) currentState.winner = 1;
 
-          localAddBattlefieldLog(`[${unit.id}] engaged [${target.id}]. Casualties: Enemy ${actualDamage}, Own ${actualCounterDamage}`);
+          localAddBattlefieldLog(`[${unit.id}] ${bayonet ? 'charged' : 'engaged'} [${target.id}]${bayonet ? ' with the bayonet' : ''}. Casualties: Enemy ${actualDamage}, Own ${actualCounterDamage}`);
           if (target.isBoxFormation && (unit.type === 'hussars' || unit.type === 'chasseurs')) {
             localAddBattlefieldLog(`[${target.id}]'s square holds firm against the cavalry!`);
           }
-          localAddCliOutput(`Attacked [${target.id}] with [${unit.id}].`);
+          localAddCliOutput(bayonet ? `[${unit.id}] charged [${target.id}] with the bayonet.` : `Attacked [${target.id}] with [${unit.id}].`);
           break;
         }
         case 'ent': {

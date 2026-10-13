@@ -377,7 +377,24 @@ export const isFlankAttack = (defender: Pick<Regiment, 'x' | 'y' | 'facing'>, x:
   return !(ahead > 0 && Math.abs(aside) <= ahead);
 };
 
-export const calculateDamage = (attacker: Regiment, defender: Regiment, defenderTerrain: Tile['terrain']): number => {
+/**
+ * Line infantry that attacks an adjacent enemy closes with the bayonet instead of
+ * firing a volley. A square holds its ground and fires.
+ */
+export const isBayonetCharge = (attacker: Pick<Regiment, 'type' | 'isBoxFormation' | 'x' | 'y'>, defender: Pick<Regiment, 'x' | 'y'>) =>
+  attacker.type === 'line_infantry' && !attacker.isBoxFormation &&
+  Math.max(Math.abs(attacker.x - defender.x), Math.abs(attacker.y - defender.y)) === 1;
+
+/** Shock of a bayonet charge: the charging side hits harder and the side receiving it replies weaker. */
+export const BAYONET_CHARGE_BONUS = 1.2;
+export const BAYONET_REPLY_FACTOR = 0.9;
+
+/**
+ * `melee` marks the two halves of a bayonet charge: 'charge' for the charging
+ * regiment's blow and 'reply' for the defender fighting back. In a melee neither
+ * side is protected by earthworks or palisades.
+ */
+export const calculateDamage = (attacker: Regiment, defender: Regiment, defenderTerrain: Tile['terrain'], melee?: 'charge' | 'reply'): number => {
   let terrainBonus = getTerrainDefenseBonus(defenderTerrain);
   
   // Buildings bonus only for infantry
@@ -386,8 +403,8 @@ export const calculateDamage = (attacker: Regiment, defender: Regiment, defender
   }
 
   const baseDefense = defender.defense;
-  const entrenchBonus = defender.isEntrenched ? 0.6 : 0;
-  const palisadeBonus = defender.isPalisaded ? 0.7 : 0;
+  const entrenchBonus = defender.isEntrenched && !melee ? 0.6 : 0;
+  const palisadeBonus = defender.isPalisaded && !melee ? 0.7 : 0;
   
   // Flanking damage: an attack from the side or the rear. A square has no flank.
   let flankingBonus = 1.0;
@@ -411,7 +428,7 @@ export const calculateDamage = (attacker: Regiment, defender: Regiment, defender
     const dist = Math.max(Math.abs(attacker.x - defender.x), Math.abs(attacker.y - defender.y));
     if (dist <= 1) bonus = 0.3;
     
-    if (defender.isEntrenched) {
+    if (defender.isEntrenched && !melee) {
       bonus *= 0.5; // Cannons less effective vs entrenched
     }
     if (defender.isBoxFormation) {
@@ -430,6 +447,9 @@ export const calculateDamage = (attacker: Regiment, defender: Regiment, defender
     bonus *= 0.5;
   }
 
+  if (melee === 'charge') bonus *= BAYONET_CHARGE_BONUS;
+  if (melee === 'reply') bonus *= BAYONET_REPLY_FACTOR;
+
   const effectiveDefense = Math.min(baseDefense + terrainBonus + entrenchBonus + palisadeBonus, 0.95);
   const rawDamage = (attacker.men * attacker.attack * bonus) * (1 - effectiveDefense);
   const variance = 0.9 + Math.random() * 0.2;
@@ -438,10 +458,24 @@ export const calculateDamage = (attacker: Regiment, defender: Regiment, defender
 
 /**
  * Resolves one engagement: the attacker's damage and the defender's return
- * fire, after the special rules for skirmishers, charging hussars and squares.
+ * fire, after the special rules for bayonet charges, skirmishers, charging hussars
+ * and squares.
  * Shared by click-to-attack and the `eg` command so they can never disagree.
  */
 export const resolveAttack = (attacker: Regiment, defender: Regiment, map: Tile[][]) => {
+  if (isBayonetCharge(attacker, defender)) {
+    // Hand to hand: the defender always fights back, but a regiment caught in
+    // the flank or rear (a square has none) fights back at half strength.
+    const caughtInFlank = !defender.isBoxFormation && isFlankAttack(defender, attacker.x, attacker.y);
+    const damage = calculateDamage(attacker, defender, map[defender.y][defender.x].terrain, 'charge');
+    const reply = calculateDamage(defender, attacker, map[attacker.y][attacker.x].terrain, 'reply');
+    return {
+      damage: Math.floor(Math.min(defender.men, damage)),
+      counterDamage: Math.floor(Math.min(attacker.men, caughtInFlank ? reply * 0.5 : reply)),
+      bayonet: true,
+    };
+  }
+
   const damage = calculateDamage(attacker, defender, map[defender.y][defender.x].terrain);
   const dist = Math.max(Math.abs(attacker.x - defender.x), Math.abs(attacker.y - defender.y));
   let counterDamage = (defender.range >= dist && isTargetInFiringLine(defender, attacker.x, attacker.y))
@@ -463,6 +497,7 @@ export const resolveAttack = (attacker: Regiment, defender: Regiment, map: Tile[
   return {
     damage: Math.floor(Math.min(defender.men, damage)),
     counterDamage: Math.floor(Math.min(attacker.men, counterDamage)),
+    bayonet: false,
   };
 };
 

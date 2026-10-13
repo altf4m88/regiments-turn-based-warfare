@@ -49,6 +49,8 @@ export interface GameAnimation {
    * line; these are the two line regiments either side of the gap that fire into it.
    */
   shooters?: { x: number; y: number }[];
+  /** 'attack': line infantry closing with the bayonet instead of firing. */
+  bayonet?: boolean;
   timestamp: number;
 }
 

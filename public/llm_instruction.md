@@ -38,7 +38,7 @@ Regiment IDs look like `p1-l3`: the player, then the type (`l` line infantry, `l
 
 | Type | Men | MP | Range | Can fire at |
 | :--- | :---: | :---: | :---: | :--- |
-| Line infantry | 1000 | 3 | 2 | Only ahead: the 3-tile-wide lane in front. Facing north, a target must have a smaller y and be at most 1 column to either side. |
+| Line infantry | 1000 | 3 | 2 | Only ahead: the 3-tile-wide lane in front. Facing north, a target must have a smaller y and be at most 1 column to either side. At distance 1 it charges with the bayonet instead of firing. |
 | Light infantry | 600 | 4 | 3 | Any direction |
 | Cannon | 150 | 2 | 8 | Any direction (a 90° cone ahead when palisaded). Only 30% damage at distance 1. |
 | Hussars | 400 | 6 | 1 | Any direction (sabre charge, adjacent targets only) |
@@ -52,8 +52,10 @@ Regiment IDs look like `p1-l3`: the player, then the type (`l` line infantry, `l
 - **Cavalry vs skirmishers.** Hussars deal ×2.5 against light infantry; chasseurs deal ×1.5.
 - **Cannon.** Deals ×0.5 against entrenched regiments, ×2 against squares (Box Formation), and only 30% at distance 1.
 - **Squares.** Cavalry deal only 25% to a square. A square deals only 50% against infantry and cannon.
+- **Bayonet charge.** Line infantry that is not in a square and attacks an enemy at distance 1 (the target must still be in its firing lane) charges with the bayonet instead of firing. Entrenchment and palisades protect neither side in the melee; terrain still counts. The charge deals +20%, with any flank bonus on top. The defender always fights back, whatever its facing, at −10%, or at half that if charged outside its front. Line against line in the open, a charge deals about 190 and takes about 140, where a volley trades about 160 each way; against an entrenched line, a volley deals about 50 and a charge about 190.
 
 **Return fire.** The target fires back if the attacker is within its range and firing arc. There are exceptions:
+- A bayonet charge is always answered in the melee, as above.
 - Light infantry and chasseurs attacking line infantry take no return fire, unless chasseurs attack a square.
 - Hussars take only 40% of the return fire, but the full amount when they charge a square.
 
@@ -93,6 +95,7 @@ You also have free information commands: `status`, `whoami`, `ls` (your regiment
 - **Go for the center early.** Send a strong group toward 10:10, take it with one regiment, and then step that regiment off onto better ground while line infantry close the approaches. Entrench those that will hold.
 - **Tempo wins; waiting loses.** Nothing scores while armies trade cannon fire at long range. The side that owns the center wins in 5 turns, so the side that does not own it must attack. Within the first few turns, bring your line infantry to musket range (2) of the enemy and fire every turn. Cannon soften a line before the assault; they are not a substitute for it.
 - **Entrench only where you mean to hold** (the approaches to the center, your Command Center). An entrenched regiment out of range of the enemy does nothing, and it cannot advance.
+- **Storm earthworks with the bayonet.** Volleys and cannon barely hurt an entrenched line, but a bayonet charge ignores its earthworks. March line infantry adjacent to it, face it, and charge, from its flank if you can. Equally, an enemy line next to yours can charge you whether or not you are dug in.
 - **Line infantry is the anvil.** Lines two tiles apart wall off enemy infantry. Face them toward the enemy and fire every turn; a regiment that marched still has its attack.
 - **Hussars are the hammer.** Use roads to get around the flanks. Hit light infantry, the flanks of line infantry, and cannon. Never charge the front of line infantry or a square.
 - **Chasseurs and light infantry skirmish.** Line infantry cannot shoot back at them, and forests and villages protect them.
