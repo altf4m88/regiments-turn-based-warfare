@@ -8,6 +8,7 @@ import { Effects } from '../scene/effects';
 import { Obstacles } from '../world/obstacles';
 import { TerrainModel } from '../world/TerrainModel';
 import { BatchSet } from './batches';
+import { RANK_FIGURES } from './formations';
 import { Corpses, RegimentVisual, UnitContext } from './RegimentVisual';
 
 export interface ActionEvent {
@@ -101,6 +102,36 @@ export class UnitManager {
       }
       this.onAction({ kind: 'attack', from: attacker.pos3(), to: tpos });
     }
+    // Cavalry riding through a gap in an enemy line: the line regiments either side wheel
+    // and fire into the gap as the horsemen reach it, and the riders fall there.
+    const firstHit = new Map<RegimentVisual, number>();
+    for (const a of fresh) {
+      if (a.type !== 'gauntlet' || a.toX === undefined || a.toY === undefined) continue;
+      const rider = this.at(a.fromX, a.fromY, this.regs.values());
+      const record = rider && state.regiments.find(r => r.id === rider.id);
+      const g = tileCenter(a.toX, a.toY);
+      let aim = new THREE.Vector3(g.x, this.model.ground(g.x, g.z), g.z);
+      let eta = 0;
+      if (rider && record) eta = rider.etaTo(this.pathFor(rider.data, record, state), a.toX, a.toY) ?? 0;
+      else if (rider) aim = rider.pos3(); // routed on the spot: fire where they stand
+      let impact = now + eta;
+      for (const s of a.shooters ?? []) {
+        const shooter = this.at(s.x, s.y, this.regs.values());
+        if (!shooter) continue;
+        // A line volley lands about half a second after the order.
+        impact = Math.max(impact, shooter.attack(aim, now, Math.max(0, eta - 0.5), { wheel: true }));
+        this.onAction({ kind: 'attack', from: shooter.pos3(), to: aim });
+      }
+      if (rider) firstHit.set(rider, Math.min(firstHit.get(rider) ?? Infinity, impact));
+      // Too few men lost to cost the regiment a figure: still show a rider falling in the gap.
+      const figures = (r: Regiment) => (r.men <= 0 ? 0 : Math.max(1, Math.ceil((r.men / r.maxMen) * RANK_FIGURES[r.type])));
+      if (rider && record && figures(record) === figures(rider.data)) rider.dropCasualty(impact);
+      const label = aim.clone().setY(aim.y + 0.75);
+      this.pending.push({ at: impact, fn: () => this.popup(label, `−${a.damage ?? 0}`, 'dmg') });
+    }
+    // The riders' casualties drop at the first volley rather than when the march begins.
+    for (const [rider, t] of firstHit) rider.impactAt = Math.max(rider.impactAt, t);
+
     for (const d of damages) {
       const v = this.at(d.fromX, d.fromY, this.regs.values());
       const when = Math.max(now, v ? v.impactAt : now);

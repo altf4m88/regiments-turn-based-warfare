@@ -324,6 +324,22 @@ export class RegimentVisual {
     this.updateLabel();
   }
 
+  /**
+   * Seconds until this regiment, marching the rest of its current route and then `steps`,
+   * reaches the centre of tile (tx, ty); null if the route doesn't pass it.
+   */
+  etaTo(steps: { x: number; y: number }[], tx: number, ty: number): number | null {
+    const route = [...this.path.map(p => ({ x: Math.floor(p.x / TILE), y: Math.floor(p.y / TILE) })), ...steps];
+    let t = 0, px = this.anchor.x, pz = this.anchor.y;
+    for (const s of route) {
+      const cx = (s.x + 0.5) * TILE, cz = (s.y + 0.5) * TILE;
+      t += Math.hypot(cx - px, cz - pz) / (SPEED[this.type] * this.terrainFactorAt(s.x, s.y));
+      px = cx; pz = cz;
+      if (s.x === tx && s.y === ty) return t;
+    }
+    return null;
+  }
+
   /** Boots, horns, hooves or wheels for the march just ordered, lasting as long as it will take. */
   private marchSound() {
     let dist = 0;
@@ -391,6 +407,26 @@ export class RegimentVisual {
     }
   }
 
+  /**
+   * One extra man brought down among the regiment at sim time `at`, for losses too small to
+   * cost it one of its figures (a few riders lost riding a gap). He falls and stays as a corpse.
+   */
+  dropCasualty(at: number) {
+    this.timeline.push({
+      at,
+      fn: () => {
+        if (this.destroyed) return;
+        const near = this.rankFigures().find(g => !g.dying);
+        const f = this.makeFigure('rank');
+        f.x = (near?.x ?? this.anchor.x) + rand(-0.15, 0.15);
+        f.z = (near?.z ?? this.anchor.y) + rand(-0.15, 0.15);
+        f.heading = near?.heading ?? this.heading;
+        this.figures.push(f);
+        this.kill(f);
+      },
+    });
+  }
+
   private kill(f: Figure) {
     if (f.dying) return;
     f.dying = true;
@@ -426,7 +462,7 @@ export class RegimentVisual {
    * Plays this regiment's attack on a target point and returns the sim time at
    * which the damage lands (so casualties drop when the shot arrives).
    */
-  attack(target: THREE.Vector3, now: number, delay = 0, opts: { intoSquare?: boolean } = {}): number {
+  attack(target: THREE.Vector3, now: number, delay = 0, opts: { intoSquare?: boolean; wheel?: boolean } = {}): number {
     const t0 = now + delay;
     const me = this.pos3();
     const dx = target.x - me.x, dz = target.z - me.z;
@@ -490,7 +526,8 @@ export class RegimentVisual {
         const h = this.heading + this.slotOf(f).h;
         return Math.sin(h) * fx + Math.cos(h) * fz > 0.3;
       });
-    } else if (this.type !== 'line_infantry') {
+    } else if (this.type !== 'line_infantry' || opts.wheel) {
+      // A line only fires ahead, unless it wheels to fire into a gap beside it.
       this.aimHeading = toward;
       this.aimUntil = t0 + 3.0;
     }
@@ -655,7 +692,11 @@ export class RegimentVisual {
   }
 
   private terrainFactor() {
-    const tx = Math.floor(this.anchor.x / TILE), ty = Math.floor(this.anchor.y / TILE);
+    return this.terrainFactorAt(Math.floor(this.anchor.x / TILE), Math.floor(this.anchor.y / TILE));
+  }
+
+  /** How fast this regiment marches over a tile, relative to open ground. */
+  private terrainFactorAt(tx: number, ty: number) {
     const t = this.ctx.model.terrainAt(tx, ty);
     if (this.ctx.model.bridgeAt(tx, ty)) return 1;
     switch (t) {

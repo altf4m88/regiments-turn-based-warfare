@@ -165,6 +165,32 @@ const GameAnimations = ({ animations, mapRotation }: { animations: GameAnimation
             );
           }
 
+          if (anim.type === 'gauntlet') {
+            // Crossfire from the line either side of the gap, and the riders' losses in it.
+            return (
+              <div key={anim.id} className="absolute pointer-events-none">
+                {(anim.shooters ?? []).flatMap((s, i) => [...Array(4)].map((_, j) => (
+                  <motion.div
+                    key={`${anim.id}-${i}-${j}`}
+                    initial={{ x: s.x * TILE_SIZE + TILE_SIZE / 2, y: s.y * TILE_SIZE + TILE_SIZE / 2, opacity: 1, scale: 0.5 }}
+                    animate={{ x: toX + (Math.random() - 0.5) * 24, y: toY + (Math.random() - 0.5) * 24, opacity: 0, scale: 1 }}
+                    transition={{ duration: 0.4, delay: j * 0.05 }}
+                    className="absolute w-2 h-2 rounded-full bg-white/80 blur-[1px]"
+                  />
+                )))}
+                <motion.div
+                  initial={{ x: toX, y: toY, opacity: 0, scale: 0.5, rotate: -mapRotation }}
+                  animate={{ opacity: 1, scale: 1.2, y: toY - 40, rotate: -mapRotation }}
+                  exit={{ opacity: 0 }}
+                  transition={{ delay: 0.3 }}
+                  className="absolute -ml-4 -mt-8 text-red-600 font-bold text-lg z-[60] drop-shadow-sm"
+                >
+                  -{anim.damage}
+                </motion.div>
+              </div>
+            );
+          }
+
           if (anim.type === 'entrench') {
             return (
               <motion.div
@@ -679,6 +705,7 @@ export default function App() {
     if (zocStatus.takesDamage) {
       damageTaken = Math.floor(unit.men * 0.15);
       addBattlefieldLog(`[${unit.id}] ${unit.name} took fire while bypassing enemy line! (-${damageTaken} men)`);
+      addAnimation({ type: 'gauntlet', fromX: unit.x, fromY: unit.y, toX: x, toY: y, damage: damageTaken, unitType: unit.type, shooters: zocStatus.shooters });
       if (damageTaken >= unit.men) {
         addBattlefieldLog(`[${unit.id}] ${unit.name} has been routed!`);
       }
@@ -1146,6 +1173,7 @@ export default function App() {
           let currentMp = unit.mp;
           let currentMen = unit.men;
           let currentFacing = unit.facing;
+          const gauntlets: GameAnimation[] = [];
 
           for (const step of pathResult.path) {
             if (step.x > currentX) currentFacing = 'east';
@@ -1161,6 +1189,7 @@ export default function App() {
             if (zocStatus.takesDamage) {
               stepDamage = Math.floor(currentMen * 0.15);
               localAddBattlefieldLog(`[${unit.id}] took fire while bypassing enemy line at (${step.x}, ${step.y})! (-${stepDamage} men)`);
+              gauntlets.push({ id: Math.random().toString(36).substr(2, 9), timestamp: Date.now(), type: 'gauntlet', fromX: unit.x, fromY: unit.y, toX: step.x, toY: step.y, damage: stepDamage, unitType: unit.type, shooters: zocStatus.shooters });
             }
 
             currentX = step.x;
@@ -1177,6 +1206,7 @@ export default function App() {
           currentState.regiments = currentState.regiments.map(r => 
             r.id === unit.id ? { ...r, x: currentX, y: currentY, men: currentMen, mp: currentMp, isEntrenched: false, facing: currentFacing } : r
           ).filter(r => r.men > 0);
+          currentState.animations = [...currentState.animations, ...gauntlets];
 
           if (currentMen > 0) {
             const targetTile = currentState.map[currentY][currentX];

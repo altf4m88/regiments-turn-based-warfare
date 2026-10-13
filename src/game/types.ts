@@ -33,7 +33,7 @@ export interface Tile {
   owner?: number; // For command_center, supply_node, and capture_point
 }
 
-export type AnimationType = 'attack' | 'move' | 'entrench' | 'box_formation' | 'palisade' | 'damage';
+export type AnimationType = 'attack' | 'move' | 'entrench' | 'box_formation' | 'palisade' | 'damage' | 'gauntlet';
 
 export interface GameAnimation {
   id: string;
@@ -44,6 +44,11 @@ export interface GameAnimation {
   toY?: number;
   unitType?: UnitType;
   damage?: number;
+  /**
+   * 'gauntlet': cavalry riding from (fromX, fromY) through the gap at (toX, toY) in an enemy
+   * line; these are the two line regiments either side of the gap that fire into it.
+   */
+  shooters?: { x: number; y: number }[];
   timestamp: number;
 }
 

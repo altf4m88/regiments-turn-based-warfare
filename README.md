@@ -33,6 +33,7 @@ The number of figures tracks each regiment's strength.
 - Line volleys ripple down the ranks with muzzle flashes and drifting powder smoke, and the target returns fire.
 - Cannon recoil, and the round shot arcs, grazes and bounces through its target.
 - Hussars charge in with sabres raised, clash, and wheel back.
+- Cavalry riding through a gap in an enemy line draw a volley from the regiments either side, which wheel to fire into the gap as the riders pass.
 - Men fall when the shot lands and stay on the field. Regiments that are wiped out drop their colours with a "ROUTED" marker.
 - Entrenching throws up earthworks, cannon erect palisades, units wade through fords, and reinforcements march out of the command centre.
 - Flags, trees and grass move in the wind, and the water flows.
