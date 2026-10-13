@@ -9,6 +9,9 @@ import {
   Shield, 
   Sword, 
   Swords,
+  Shuffle,
+  Copy,
+  ClipboardList,
   Move, 
   Users, 
   ChevronRight, 
@@ -49,10 +52,12 @@ import { twMerge } from 'tailwind-merge';
 
 import { Client } from "langsmith";
 import { Regiment, Tile, GameState, GameMode, UnitType, Facing, GameAnimation, AiConfig, AiProvider, Nation, ThinkingLevelSetting } from './game/types';
-import { getInitialState, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath, resolveAttack, nextRegimentId, parseUnitType, NATIONS, nationOf, nationsFor, isAiPlayer, VERSUS_AI_PLAYER } from './game/engine';
+import { getInitialState, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath, resolveAttack, nextRegimentId, parseUnitType, NATIONS, nationOf, nationsFor, isAiPlayer, aiPlayerOf, humanPlayerOf, VERSUS_AI_PLAYER, bumpTally, snapshot, sideStats, victoryReason, randomSeed, normalizeSeed } from './game/engine';
 import { AI_MODELS, AI_PROVIDERS, THINKING_LEVELS, resolveAiModel } from './ai/models';
 import { AiSession, startAiSession } from './ai/session';
 import { Markdown, plainText } from './ui/Markdown';
+import { BattleReport, CasualtyPanel, MapPreview } from './ui/BattleReport';
+import { BattleRecord, generalOf, loadBattles, recordBattle, saveBattle } from './game/history';
 
 // The 3D battlefield (three.js) is code-split so the 2D view stays light.
 const BattlefieldView = lazy(() => import('./three/BattlefieldView'));
@@ -281,6 +286,7 @@ const AiConfigModal = ({
   onSave,
   nations,
   players = [1, 2],
+  onAiPlayerChange,
 }: { 
   isOpen: boolean; 
   onClose: () => void; 
@@ -289,6 +295,8 @@ const AiConfigModal = ({
   nations: { [player: number]: Nation };
   /** The players commanded by an LLM general: both, or only your opponent in Human vs AI. */
   players?: number[];
+  /** Human vs AI, before the battle: lets you choose which side you command. */
+  onAiPlayerChange?: (aiPlayer: number) => void;
 }) => {
   const versus = players.length === 1;
   const [localConfigs, setLocalConfigs] = useState(aiConfigs);
@@ -308,6 +316,26 @@ const AiConfigModal = ({
             <X size={24} />
           </button>
         </div>
+
+        {versus && onAiPlayerChange && (
+          <div className="space-y-1">
+            <label className="text-[10px] uppercase font-bold opacity-60">You command</label>
+            <div className="grid grid-cols-2 border border-[#141414]" role="radiogroup" aria-label="Your side">
+              {[1, 2].map(human => (
+                <button
+                  key={human}
+                  role="radio"
+                  aria-checked={players[0] !== human}
+                  onClick={() => onAiPlayerChange(3 - human)}
+                  className={cn("p-2 text-left transition-all", players[0] !== human ? "bg-[#141414] text-[#E4E3E0]" : "bg-white hover:bg-[#141414]/10")}
+                >
+                  <span className="block text-xs font-bold uppercase">Player {human} · {NATIONS[nations[human]].adjective}</span>
+                  <span className="block text-[9px] font-mono uppercase opacity-60">{human === 1 ? 'South, moves first' : 'North, moves second'}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className={cn("grid grid-cols-1 gap-8", !versus && "md:grid-cols-2")}>
           {players.map(playerNum => {
@@ -502,6 +530,12 @@ export default function App() {
   const [showAiConfig, setShowAiConfig] = useState(false);
   // Which battle the start screen's AI settings will begin: AI vs AI, or you against one AI.
   const [aiSetupMode, setAiSetupMode] = useState<'ai' | 'versus'>('ai');
+  // Human vs AI: the player the AI general commands (you take the other).
+  const [versusAiPlayer, setVersusAiPlayer] = useState(VERSUS_AI_PLAYER);
+  // The map code on the start screen; the same code always gives the same battlefield.
+  const [seedInput, setSeedInput] = useState(randomSeed);
+  const [reportHidden, setReportHidden] = useState(false);
+  const [battleHistory, setBattleHistory] = useState<BattleRecord[]>(loadBattles);
   const [isArchiveOpen, setIsArchiveOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'3d' | '2d'>(() => {
     try {
@@ -553,10 +587,39 @@ export default function App() {
   }, [p1Nation]);
 
   /** Fresh battle with the chosen armies (the map is regenerated too). */
-  const startGame = (mode: GameMode, aiConfigs: { [key: number]: AiConfig }) => {
+  /**
+   * Fresh battle on the map code from the start screen (or the one given), with the chosen
+   * armies. In Human vs AI the view starts from your side of the field.
+   */
+  const startGame = (mode: GameMode, aiConfigs: { [key: number]: AiConfig }, opts: { seed?: string; nations?: { [player: number]: Nation }; aiPlayer?: number } = {}) => {
+    battleRef.current++;
     aiTurnRef.current = null;
-    setMapRotation(0);
-    setGameState({ ...getInitialState(nationsFor(p1Nation)), gameMode: mode, aiConfigs });
+    setIsAiThinking(false);
+    setAiMonologue(null);
+    setAiPaused(false);
+    setAiStalled(false);
+    setReportHidden(false);
+    const seed = opts.seed ?? (normalizeSeed(seedInput) || randomSeed());
+    const aiPlayer = mode === 'versus' ? opts.aiPlayer ?? versusAiPlayer : undefined;
+    setMapRotation(aiPlayer === 1 ? 180 : 0);
+    setGameState({ ...getInitialState(opts.nations ?? nationsFor(p1Nation), seed), gameMode: mode, aiConfigs, aiPlayer });
+  };
+
+  /**
+   * The same map again. Swapping sides gives each general the other army's starting
+   * position and turn order; each keeps its own army (and, against an AI, you keep yours).
+   */
+  const rematch = (swapSides: boolean) => {
+    const s = gameState;
+    if (!s.gameMode) return;
+    function flip<T>(o: { [player: number]: T }): { [player: number]: T } {
+      return swapSides ? { 1: o[2], 2: o[1] } : o;
+    }
+    const nations = flip<Nation>(s.nations);
+    const aiPlayer = s.gameMode === 'versus' ? (swapSides ? humanPlayerOf(s) : aiPlayerOf(s)) : undefined;
+    setP1Nation(nations[1]);
+    if (aiPlayer) setVersusAiPlayer(aiPlayer);
+    startGame(s.gameMode, flip<AiConfig>(s.aiConfigs), { seed: s.seed, nations, aiPlayer });
   };
 
   useEffect(() => {
@@ -578,7 +641,11 @@ export default function App() {
     stateStr += `Current Player: Player ${state.currentPlayer}\n`;
     stateStr += `Supply: P1: ${state.supply[1]}, P2: ${state.supply[2]}\n`;
     stateStr += `Reinforcement costs: ${Object.entries(UNIT_COSTS).map(([t, c]) => `${t} ${c}`).join(', ')}\n`;
-    stateStr += `Capture Point (10:10): ${state.capturePointOwner ? `Owned by P${state.capturePointOwner} (${state.capturePointTurns}/5 turns)` : 'Uncaptured'}\n\n`;
+    stateStr += `Capture Point (10:10): ${state.capturePointOwner ? `Owned by P${state.capturePointOwner} (${state.capturePointTurns}/5 turns)` : 'Uncaptured'}\n`;
+    stateStr += `Strength: ${[1, 2].map(p => {
+      const s = sideStats(state, p);
+      return `P${p} ${s.regiments} regiments, ${s.men} men (lost ${s.lostRegiments} regiments, ${s.lostMen} men)`;
+    }).join(' | ')}\n\n`;
 
     // Objectives and terrain, so a general never has to spend an iteration on reconnaissance.
     const tiles = state.map.flat();
@@ -832,6 +899,7 @@ export default function App() {
     const { damage: actualDamage, counterDamage: actualCounterDamage, bayonet } = resolveAttack(attacker, defender, gameState.map);
 
     setGameState(prev => {
+      const tally = bumpTally(prev.tally, attacker.owner, { attacks: 1, charges: bayonet ? 1 : 0 });
       let newRegiments = prev.regiments.map(r => {
         if (r.id === defender.id) {
           return { ...r, men: Math.max(0, r.men - actualDamage) };
@@ -850,7 +918,7 @@ export default function App() {
       if (p1Units.length === 0) winner = 2;
       else if (p2Units.length === 0) winner = 1;
 
-      return { ...prev, regiments: newRegiments, winner };
+      return { ...prev, regiments: newRegiments, winner, tally };
     });
 
     addAnimation({ type: 'attack', fromX: attacker.x, fromY: attacker.y, toX: defender.x, toY: defender.y, unitType: attacker.type, bayonet });
@@ -988,7 +1056,8 @@ export default function App() {
         [prev.currentPlayer]: prev.supply[prev.currentPlayer] - cost
       },
       regiments: [...prev.regiments, newUnit],
-      idCounters
+      idCounters,
+      tally: bumpTally(prev.tally, prev.currentPlayer, { raised: 1, raisedMen: newUnit.men, supplySpent: cost }),
     }));
 
     addBattlefieldLog(`Reinforcements arrived: ${newUnit.name} at (${emptyNeighbor.x}, ${emptyNeighbor.y}).`);
@@ -1024,9 +1093,13 @@ export default function App() {
     }
 
     const supplyGain = (hasCC ? SUPPLY_PER_TURN : 0) + (supplyNodesCount * SUPPLY_NODE_BONUS);
+    let tally = bumpTally(prev.tally, nextPlayer, { supplyEarned: supplyGain });
+    if (newCapturePointTurns > prev.capturePointTurns) tally = bumpTally(tally, prev.currentPlayer, { capturePointTurns: 1 });
 
     return {
       ...prev,
+      tally,
+      timeline: [...prev.timeline, snapshot(prev, prev.turn, prev.currentPlayer)],
       currentPlayer: nextPlayer,
       turn: isNewTurn ? prev.turn + 1 : prev.turn,
       selectedUnitId: null,
@@ -1057,6 +1130,7 @@ export default function App() {
 
   const applyCommands = (state: GameState, cmd: string): { newState: GameState, logs: string[], cli: string[], error: string | null } => {
     let currentState = { ...state, animations: [] };
+    const commander = state.currentPlayer;
     let logsToAdd: string[] = [];
     let cliToAdd: string[] = [];
     let error: string | null = null;
@@ -1185,6 +1259,7 @@ export default function App() {
         newUnit.mp = 0; newUnit.hasAttacked = true;
         currentState.regiments = [...currentState.regiments, newUnit];
         currentState.supply = { ...currentState.supply, [currentState.currentPlayer]: currentState.supply[currentState.currentPlayer] - cost };
+        currentState.tally = bumpTally(currentState.tally, currentState.currentPlayer, { raised: 1, raisedMen: newUnit.men, supplySpent: cost });
         localAddBattlefieldLog(`Reinforcements arrived: ${newUnit.name} at (${emptyNeighbor.x}, ${emptyNeighbor.y}).`);
         continue;
       }
@@ -1304,6 +1379,7 @@ export default function App() {
             if (r.id === unit.id) return { ...r, men: Math.max(0, r.men - actualCounterDamage), hasAttacked: true, mp: Math.max(0, r.mp - 1) };
             return r;
           }).filter(r => r.men > 0);
+          currentState.tally = bumpTally(currentState.tally, unit.owner, { attacks: 1, charges: bayonet ? 1 : 0 });
 
           // Add animations
           const timestamp = Date.now();
@@ -1403,6 +1479,8 @@ export default function App() {
           error = `Unknown command: ${action}`;
       }
     }
+
+    if (error) currentState.tally = bumpTally(currentState.tally, commander, { ordersRejected: 1 });
 
     return {
       newState: {
@@ -1708,7 +1786,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
   }, [aiInstructions, getGameStateString, gameState, executeCommand]);
 
   useEffect(() => {
-    if (isAiPlayer({ gameMode: gameState.gameMode }, gameState.currentPlayer) && !gameState.winner && !isAiThinking && !aiPaused && !aiStalled) {
+    if (isAiPlayer({ gameMode: gameState.gameMode, aiPlayer: gameState.aiPlayer }, gameState.currentPlayer) && !gameState.winner && !isAiThinking && !aiPaused && !aiStalled) {
       // Check if we've already started processing this turn/player
       if (aiTurnRef.current?.turn === gameState.turn && aiTurnRef.current?.player === gameState.currentPlayer) {
         return;
@@ -1721,7 +1799,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
       }, 1000);
       return () => clearTimeout(timer);
     }
-  }, [gameState.gameMode, gameState.currentPlayer, gameState.winner, gameState.turn, isAiThinking, aiPaused, aiStalled, runAiTurn]);
+  }, [gameState.gameMode, gameState.aiPlayer, gameState.currentPlayer, gameState.winner, gameState.turn, isAiThinking, aiPaused, aiStalled, runAiTurn]);
 
   /** Runs the current AI general's turn again after it failed, from where it stopped. */
   const retryAiTurn = () => {
@@ -1738,6 +1816,8 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
     setAiMonologue(null);
     setAiPaused(false);
     setAiStalled(false);
+    setReportHidden(false);
+    setSeedInput(randomSeed());
     setGameState(prev => ({ ...getInitialState(), aiConfigs: prev.aiConfigs }));
   };
 
@@ -1745,8 +1825,39 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
     if (window.confirm('Abandon this battle and return to the start screen?')) resetGame();
   };
 
+  // Each finished battle is recorded once, so rematches on the same map can be compared.
+  useEffect(() => {
+    if (!gameState.winner || battleHistory.some(b => b.battleId === gameState.battleId)) return;
+    const record = recordBattle(gameState);
+    if (record) setBattleHistory(saveBattle(record));
+  }, [gameState.winner, gameState.battleId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** The battle report as JSON: result, each side's account, strength turn by turn, and the generals' dispatches. */
+  const exportReport = () => {
+    const s = gameState;
+    const report = {
+      game: 'Regiments',
+      seed: s.seed,
+      mode: s.gameMode,
+      turns: s.turn,
+      winner: s.winner,
+      victory: victoryReason(s),
+      sides: [1, 2].map(p => ({ player: p, nation: nationOf(s, p), general: generalOf(s, p), ...sideStats(s, p) })),
+      timeline: s.timeline,
+      dispatches: s.monologueHistory,
+      battlefieldLog: s.battlefieldLogs,
+    };
+    const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `regiments_report_${s.seed}_turn_${s.turn}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const exportLogs = () => {
-    const content = `--- BATTLEFIELD LOGS ---\n${gameState.battlefieldLogs.join('\n')}\n\n--- CLI HISTORY ---\n${gameState.cliHistory.join('\n')}`;
+    const content = `--- MAP ${gameState.seed} ---\n\n--- BATTLEFIELD LOGS ---\n${gameState.battlefieldLogs.join('\n')}\n\n--- CLI HISTORY ---\n${gameState.cliHistory.join('\n')}`;
     const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1791,6 +1902,39 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
             </p>
           </div>
 
+          <div className="flex items-center gap-5 border border-[#141414]/15 p-4">
+            {(() => {
+              const code = normalizeSeed(seedInput);
+              const preview = code ? getInitialState(nationsFor(p1Nation), code) : null;
+              return preview
+                ? <MapPreview map={preview.map} regiments={preview.regiments} nations={preview.nations} size={112} />
+                : <div className="w-[112px] h-[112px] shrink-0 border border-dashed border-[#141414]/30 flex items-center justify-center text-[9px] font-mono uppercase opacity-50 text-center p-2">Random map</div>;
+            })()}
+            <div className="flex-1 space-y-2">
+              <label htmlFor="map-code" className="block text-[10px] uppercase tracking-widest font-mono opacity-50">Map code</label>
+              <div className="flex gap-2">
+                <input
+                  id="map-code"
+                  value={seedInput}
+                  onChange={e => setSeedInput(normalizeSeed(e.target.value))}
+                  placeholder="Random"
+                  spellCheck={false}
+                  className="w-36 px-3 py-2 border border-[#141414] font-mono text-lg font-bold tracking-[0.2em] uppercase bg-white outline-none focus:ring-1 focus:ring-[#141414]"
+                />
+                <button
+                  onClick={() => setSeedInput(randomSeed())}
+                  className="px-3 border border-[#141414] text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
+                  title="Roll a new map"
+                >
+                  <Shuffle size={14} /> New map
+                </button>
+              </div>
+              <p className="text-[10px] font-mono opacity-50 leading-snug">
+                The same code always gives the same battlefield. Note it to replay a map, or to pit two generals on it from both sides.
+              </p>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <button 
               onClick={() => startGame('manual', gameState.aiConfigs)}
@@ -1810,7 +1954,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
               <Swords size={44} className="group-hover:scale-110 transition-transform" />
               <div className="text-center">
                 <h2 className="text-lg font-bold uppercase">Human vs AI</h2>
-                <p className="text-[10px] uppercase opacity-50 font-mono mt-1">You command Player 1 against an AI General</p>
+                <p className="text-[10px] uppercase opacity-50 font-mono mt-1">You command one army against an AI General</p>
               </div>
             </button>
             
@@ -1831,7 +1975,8 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
             onClose={() => setShowAiConfig(false)}
             aiConfigs={gameState.aiConfigs}
             nations={nationsFor(p1Nation)}
-            players={aiSetupMode === 'versus' ? [VERSUS_AI_PLAYER] : [1, 2]}
+            players={aiSetupMode === 'versus' ? [versusAiPlayer] : [1, 2]}
+            onAiPlayerChange={setVersusAiPlayer}
             onSave={(configs) => {
               startGame(aiSetupMode, configs);
               setShowAiConfig(false);
@@ -2217,6 +2362,11 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
                 </section>
 
                 <section>
+                  <h2 className="text-[11px] uppercase tracking-widest opacity-50 font-serif italic mb-3">Casualties</h2>
+                  <CasualtyPanel state={gameState} />
+                </section>
+
+                <section>
                   <h2 className="text-[11px] uppercase tracking-widest opacity-50 font-serif italic mb-4">Reinforcements</h2>
                   <div className="grid grid-cols-1 gap-2">
                     {(Object.keys(UNIT_COSTS) as UnitType[]).map(type => (
@@ -2446,7 +2596,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
         onClose={() => setShowAiConfig(false)}
         aiConfigs={gameState.aiConfigs}
         nations={gameState.nations}
-        players={gameState.gameMode === 'versus' ? [VERSUS_AI_PLAYER] : [1, 2]}
+        players={gameState.gameMode === 'versus' ? [aiPlayerOf(gameState)] : [1, 2]}
         onSave={(configs) => {
           setGameState(prev => ({ ...prev, aiConfigs: configs }));
           setShowAiConfig(false);
@@ -2455,25 +2605,25 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
         }}
       />
 
-      {/* Winner Overlay */}
-          <AnimatePresence>
-            {gameState.winner && (
-              <motion.div 
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="absolute inset-0 bg-[#141414]/90 z-50 flex flex-col items-center justify-center text-[#E4E3E0] p-12 text-center"
-              >
-                <h2 className="text-6xl font-bold uppercase italic font-serif mb-4">Victory</h2>
-                <p className="text-2xl mb-8 uppercase tracking-widest">Player {gameState.winner} ({NATIONS[nationOf(gameState, gameState.winner)].adjective}) has conquered the field</p>
-                <button 
-                  onClick={resetGame}
-                  className="px-12 py-4 border border-[#E4E3E0] hover:bg-[#E4E3E0] hover:text-[#141414] transition-all uppercase font-bold tracking-widest"
-                >
-                  New Campaign
-                </button>
-              </motion.div>
-            )}
-          </AnimatePresence>
+      {/* End-of-battle report */}
+          {gameState.winner && !reportHidden && (
+            <BattleReport
+              state={gameState}
+              history={battleHistory}
+              onRematch={rematch}
+              onExport={exportReport}
+              onViewField={() => setReportHidden(true)}
+              onNewCampaign={resetGame}
+            />
+          )}
+          {gameState.winner && reportHidden && (
+            <button
+              onClick={() => setReportHidden(false)}
+              className="absolute top-14 right-3 z-40 px-4 py-2.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 shadow-xl hover:bg-[#2a2a2a]"
+            >
+              <ClipboardList size={14} /> Battle report
+            </button>
+          )}
         </section>
 
         {/* Sidebar Right: Controls */}
@@ -2496,6 +2646,25 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
                     >
                       <Compass size={14} /> Rotate View
                     </button>
+                    <div className="px-4 py-2 border border-[#141414] bg-white/50 flex items-center justify-between">
+                      <div>
+                        <p className="text-[10px] uppercase opacity-50 font-mono italic">Map code</p>
+                        <p className="font-mono font-bold tracking-[0.2em]">{gameState.seed}</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard?.writeText(gameState.seed).then(
+                            () => addBattlefieldLog(`Map code ${gameState.seed} copied.`),
+                            () => addBattlefieldLog(`Map code: ${gameState.seed}`),
+                          );
+                        }}
+                        className="p-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
+                        title="Copy the map code"
+                        aria-label="Copy the map code"
+                      >
+                        <Copy size={14} />
+                      </button>
+                    </div>
                     <div className="p-4 border border-[#141414] bg-white/50">
                       <p className="text-[10px] uppercase opacity-50 font-mono italic">Terrain Info</p>
                       {hoveredTile ? (

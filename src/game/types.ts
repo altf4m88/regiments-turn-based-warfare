@@ -90,6 +90,33 @@ export interface MonologueEntry {
 
 export type GameMode = 'manual' | 'ai' | 'versus';
 
+/** A side's running account of the battle; losses and strength are worked out from it and the field. */
+export interface SideTally {
+  startRegiments: number;
+  startMen: number;
+  /** Reinforcements raised, their men, and the supply they cost. */
+  raised: number;
+  raisedMen: number;
+  supplySpent: number;
+  supplyEarned: number;
+  /** Attacks made, of which bayonet charges. */
+  attacks: number;
+  charges: number;
+  /** Turns ended holding the Capture Point. */
+  capturePointTurns: number;
+  /** Typed or AI orders the game rejected with an error. */
+  ordersRejected: number;
+}
+
+/** Each army's strength when a player's turn ends (and at the start of the battle). */
+export interface TurnSnapshot {
+  turn: number;
+  /** The player whose turn just ended; 0 for the opening position. */
+  player: number;
+  men: { [player: number]: number };
+  regiments: { [player: number]: number };
+}
+
 export interface GameState {
   map: Tile[][];
   regiments: Regiment[];
@@ -108,6 +135,14 @@ export interface GameState {
    * 'versus': a person commands Player 1 against an LLM general commanding Player 2.
    */
   gameMode: GameMode | null;
+  /** In 'versus', the player the AI general commands (Player 2 unless you chose to play second). */
+  aiPlayer?: number;
+  /** The map code: the same code always generates the same battlefield. */
+  seed: string;
+  /** Unique per battle, so a finished battle is recorded once. */
+  battleId: string;
+  tally: { [player: number]: SideTally };
+  timeline: TurnSnapshot[];
   aiConfigs: { [key: number]: AiConfig };
   monologueHistory: MonologueEntry[];
   nations: { [player: number]: Nation };

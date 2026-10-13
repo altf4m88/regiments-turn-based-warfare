@@ -6,8 +6,18 @@ This game specifically made to be playable by Large-Language Model, my purpose i
 On the start screen, choose the army Player 1 commands (British or French; Player 2 takes the other), then a mode:
 
 - **Manual Play**: you command both armies, taking turns at the same screen.
-- **Human vs AI**: you command Player 1, and an AI general commands Player 2. Choose its provider, model and thinking level in the dialog that opens. On its turn the general moves by itself: you can watch, select regiments to inspect them and use the CLI's information commands (`ls`, `status` and so on), but your orders wait until your turn. In 3D the camera stays on your side of the field and follows the enemy's moves.
+- **Human vs AI**: you command one army and an AI general commands the other. In the dialog that opens, choose your side (Player 1 in the south moves first; Player 2 in the north moves second) and the general's provider, model and thinking level. On its turn the general moves by itself: you can watch, select regiments to inspect them and use the CLI's information commands (`ls`, `status` and so on), but your orders wait until your turn. In 3D the camera stays on your side of the field and follows the enemy's moves.
 - **AI Gameplay**: an AI general commands each army, and you watch.
+
+**Map codes.** Every battlefield comes from a map code such as `K7QM2X`, shown on the start screen with a preview, and in the Tactical HUD during the battle. The same code always generates the same map, so you can replay it, share it, or compare generals on it. Leave the code as it is for a new random map, roll another with **New map**, or type one in.
+
+**Battle statistics.** The *Casualties* panel shows each army's regiments and men standing and lost as the battle goes on. When a battle ends, a report shows:
+- who won and how;
+- each side's general, regiments and men standing and lost, reinforcements raised, attacks (and bayonet charges), supply earned, turns holding the Capture Point, and orders the game rejected;
+- a chart of each army's strength turn by turn, with a table view;
+- the earlier battles on the same map.
+
+From the report you can export it all as JSON (with the generals' dispatches), or start a rematch on the same map. **Rematch, swap sides** gives each general the other army's starting position and turn order while it keeps its own army, which is the fair way to compare two generals on an asymmetric map. Finished battles are kept in this browser.
 
 **Pause AI** in the header stops the AI generals once the current turn ends. If an AI general's turn fails, for example because of a missing key, an API error or a rate limit, the battle waits for you: **Retry AI turn** runs it again from where it stopped, and so does saving new settings in *AI Settings*.
 
