@@ -64,6 +64,8 @@ import { startsCompact, useCompact } from './ui/useCompact';
 import { RecordsView } from './ui/RecordsView';
 import { inCharacter, personaBriefing, whoIsWho } from './ai/persona';
 import { TurnBanner } from './ui/TurnBanner';
+import { DispatchBubble } from './ui/DispatchBubble';
+import { CommanderPortrait } from './ui/CommanderPortrait';
 import { ProviderIcon } from './ui/ProviderIcon';
 
 // The 3D battlefield (three.js) is code-split so the 2D view stays light.
@@ -573,8 +575,8 @@ export default function App() {
   const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(() => !startsCompact());
   const [menuOpen, setMenuOpen] = useState(false);
   const [isAiThinking, setIsAiThinking] = useState(false);
-  const [aiMonologue, setAiMonologue] = useState<string | null>(null);
-  const [dispatchExpanded, setDispatchExpanded] = useState(false);
+  // Dispatches up to this time were closed by the player; a newer one shows again.
+  const [dispatchClosedAt, setDispatchClosedAt] = useState(0);
   const [dispatchMinimized, setDispatchMinimized] = useState(() => {
     try {
       return localStorage.getItem('regiments.dispatch') === 'minimized';
@@ -636,8 +638,6 @@ export default function App() {
     }
   }, [dispatchMinimized]);
 
-  // Each new dispatch starts as a short preview.
-  useEffect(() => setDispatchExpanded(false), [aiMonologue]);
 
   useEffect(() => {
     try {
@@ -672,7 +672,7 @@ export default function App() {
     battleRef.current++;
     aiTurnRef.current = null;
     setIsAiThinking(false);
-    setAiMonologue(null);
+    setDispatchClosedAt(0);
     setAiPaused(false);
     setAiStalled(false);
     setReportHidden(false);
@@ -796,6 +796,7 @@ export default function App() {
   };
 
   const selectedUnit = gameState.regiments.find(r => r.id === gameState.selectedUnitId);
+  const latestDispatch = gameState.monologueHistory[gameState.monologueHistory.length - 1];
   // On an AI general's turn a person can look over the field, but not give orders.
   const humanTurn = !isAiPlayer(gameState, gameState.currentPlayer);
   const commandable = (r: Regiment | undefined): r is Regiment => !!r && humanTurn && r.owner === gameState.currentPlayer;
@@ -1661,7 +1662,6 @@ export default function App() {
     }
 
     setIsAiThinking(true);
-    setAiMonologue(null);
     
     // LangSmith tracing setup
     let parentRunId: string | undefined;
@@ -1805,7 +1805,6 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
         // Extract monologue (text before the first code block)
         const monologue = responseText.split('```')[0].trim();
         if (monologue) {
-          setAiMonologue(monologue);
           const newMonologueEntry = {
             turn: currentGameState.turn,
             player: currentGameState.currentPlayer,
@@ -1903,8 +1902,6 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
         });
       }
 
-      // Clear monologue after turn ends
-      setTimeout(() => setAiMonologue(null), 3000);
     } catch (error: any) {
       console.error("AI Turn Error:", error);
       if (!live()) return;
@@ -1955,7 +1952,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
     battleRef.current++;
     aiTurnRef.current = null;
     setIsAiThinking(false);
-    setAiMonologue(null);
+    setDispatchClosedAt(0);
     setAiPaused(false);
     setAiStalled(false);
     setReportHidden(false);
@@ -2055,8 +2052,8 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
                   setCommanderNames(c => ({ ...c, [n]: others[Math.floor(Math.random() * others.length)] }));
                 };
                 return (
-                  <div key={n} className="flex items-center gap-2 border border-[#141414]/15 pl-3 pr-1 py-1">
-                    <span className={cn("w-3 h-3 shrink-0", n === 'british' ? "bg-[#b02a20]" : "bg-[#23376e]")} />
+                  <div key={n} className="flex items-center gap-2 border border-[#141414]/15 pl-2 pr-1 py-1.5">
+                    <CommanderPortrait name={normalizeCommander(commanderNames[n]) || DEFAULT_COMMANDERS[n]} nation={n} size={32} />
                     <span className="text-[9px] font-mono uppercase opacity-60 shrink-0">P{player}</span>
                     <input
                       list={`commanders-${n}`}
@@ -2403,60 +2400,18 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
       )}
 
       <main className="flex-1 flex overflow-hidden relative">
-        {/* With the HUD column hidden, the AI general's dispatch floats as a compact card in the
-            map's top-right corner: three lines by default, expandable, or minimised to a tab. */}
-        <AnimatePresence>
-          {aiMonologue && !isRightSidebarOpen && (dispatchMinimized ? (
-            <motion.button
-              key="dispatch-tab"
-              initial={{ opacity: 0, y: -8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              onClick={() => setDispatchMinimized(false)}
-              className={cn(
-                "absolute z-[60] top-4 px-3 py-2 border-2 bg-white/90 backdrop-blur-sm shadow-lg flex items-center gap-2 font-bold uppercase text-[9px] tracking-wider",
-                compact ? "right-2 top-14" : "right-4",
-                side(gameState.currentPlayer).bubble
-              )}
-              aria-label="Show the AI general's dispatch"
-            >
-              <ProviderIcon provider={resolveAiModel(gameState.aiConfigs[gameState.currentPlayer]).provider} size={12} /> {commanderOf(gameState, gameState.currentPlayer)}'s dispatch
-              <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
-            </motion.button>
-          ) : (
-            <motion.div
-              key="dispatch"
-              initial={{ opacity: 0, y: -8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              className={cn(
-                "absolute z-[60] top-4 w-[min(380px,calc(100%-1rem))] border-2 bg-white/90 backdrop-blur-sm shadow-xl",
-                compact ? "right-2 top-14" : "right-4",
-                side(gameState.currentPlayer).bubble
-              )}
-            >
-              <div className="flex items-center justify-between gap-2 px-4 pt-3 font-bold uppercase text-[9px] tracking-wider opacity-60">
-                <span className="flex items-center gap-2"><ProviderIcon provider={resolveAiModel(gameState.aiConfigs[gameState.currentPlayer]).provider} size={11} /> {commanderOf(gameState, gameState.currentPlayer)} · Dispatch</span>
-                <button onClick={() => setDispatchMinimized(true)} className="p-0.5 hover:opacity-100" aria-label="Minimise the dispatch">
-                  <Minus size={12} />
-                </button>
-              </div>
-              {dispatchExpanded ? (
-                <Markdown text={aiMonologue} className="px-4 pt-1 max-h-[40vh] overflow-y-auto space-y-1.5 font-serif italic text-xs leading-relaxed" />
-              ) : (
-                <p className="px-4 pt-1 font-serif italic text-xs leading-relaxed line-clamp-3">{plainText(aiMonologue)}</p>
-              )}
-              {aiMonologue.length > 180 ? (
-                <button
-                  onClick={() => setDispatchExpanded(v => !v)}
-                  className="px-4 pt-1 pb-3 font-bold uppercase text-[9px] tracking-wider opacity-60 hover:opacity-100"
-                >
-                  {dispatchExpanded ? 'Show less' : 'Read full dispatch'}
-                </button>
-              ) : <div className="pb-3" />}
-            </motion.div>
-          ))}
-        </AnimatePresence>
+        {/* The latest AI dispatch, as a speech bubble from its general beside the HUD column:
+            minimisable to a tab, or closed until the next dispatch. */}
+        {latestDispatch && !gameState.winner && latestDispatch.timestamp > dispatchClosedAt && (
+          <DispatchBubble
+            state={gameState}
+            entry={latestDispatch}
+            minimized={dispatchMinimized}
+            onMinimize={setDispatchMinimized}
+            onClose={() => setDispatchClosedAt(latestDispatch.timestamp)}
+            className={compact ? 'top-14 right-2' : cn('top-14', isRightSidebarOpen ? 'right-[17rem]' : 'right-4')}
+          />
+        )}
 
         {compact && (isLeftSidebarOpen || isRightSidebarOpen) && (
           <div className="absolute inset-0 z-[70] bg-[#141414]/30" onClick={closePanels} aria-hidden />
@@ -2989,21 +2944,6 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
                   </div>
                 </section>
 
-                {/* The latest AI dispatch lives here, off the map, so it never hides the troops. */}
-                {gameState.monologueHistory.length > 0 && (() => {
-                  const latest = gameState.monologueHistory[gameState.monologueHistory.length - 1];
-                  return (
-                    <section>
-                      <h2 className="flex items-center justify-between text-[11px] uppercase tracking-widest opacity-50 font-serif italic mb-4">
-                        <span>{commanderOf(gameState, latest.player)}'s dispatch</span>
-                        <span className="not-italic font-mono text-[9px]">Turn {latest.turn}</span>
-                      </h2>
-                      <div className={cn("p-3 border-l-2 max-h-[38vh] overflow-y-auto custom-scrollbar", side(latest.player).archive)}>
-                        <Markdown text={latest.text} className="space-y-1.5 font-serif italic text-[11px] leading-relaxed text-[#141414]/85" />
-                      </div>
-                    </section>
-                  );
-                })()}
 
                 <section>
                   <button 

@@ -59,5 +59,7 @@ export const plainText = (text: string) =>
     .replace(/^\s*([-*•]|\d+[.)])\s+/gm, '')
     .replace(/`([^`]+)`/g, '$1')
     .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*\s][^*]*)\*/g, '$1')
+    .replace(/\b_([^_\s][^_]*)_\b/g, '$1')
     .replace(/\s+/g, ' ')
     .trim();

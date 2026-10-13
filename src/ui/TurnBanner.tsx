@@ -3,6 +3,7 @@ import { modelName, resolveAiModel } from '../ai/models';
 import { NATIONS, commanderOf, isAiPlayer, nationOf } from '../game/engine';
 import { GameState, Nation } from '../game/types';
 import { ProviderIcon } from './ProviderIcon';
+import { CommanderPortrait } from './CommanderPortrait';
 
 const TITLE_COLOR: Record<Nation, string> = { british: 'text-red-200', french: 'text-blue-200' };
 const SHOW_MS = 3200;
@@ -44,14 +45,18 @@ export function TurnBanner({ state, compact = false }: { state: GameState; compa
   return (
     <div
       key={banner.key}
-      className="bf-turn-banner fixed left-1/2 top-[22%] z-[65] pointer-events-none text-center max-w-[calc(100vw-1rem)]"
+      // Below the dispatch bubble (top right of the map); near the bottom on a phone held sideways.
+      className="bf-turn-banner fixed left-1/2 top-[38%] [@media(max-height:560px)]:top-auto [@media(max-height:560px)]:bottom-[22%] z-[65] pointer-events-none text-center max-w-[calc(100vw-1rem)]"
       role="status"
     >
+      <div className="flex items-center justify-center gap-4">
+      <CommanderPortrait name={commander} nation={nation} size={compact ? 52 : 76} className="shadow-2xl" />
+      <div className="text-left">
       <div className="text-[10px] font-mono uppercase tracking-[0.4em] text-[#E4E3E0]/80">Turn {banner.turn} · Player {banner.player}</div>
       <div className={(compact ? 'text-2xl ' : 'text-4xl ') + 'font-serif italic font-bold tracking-tight whitespace-nowrap ' + TITLE_COLOR[nation]}>
         The {NATIONS[nation].adjective} march
       </div>
-      <div className={'mt-1.5 flex items-center justify-center gap-2 text-[#E4E3E0] ' + (compact ? 'text-xs' : 'text-sm')}>
+      <div className={'mt-1.5 flex items-center gap-2 text-[#E4E3E0] ' + (compact ? 'text-xs' : 'text-sm')}>
         {ai ? (
           <>
             <span><span className="font-bold">{commander}</span> is thinking with {modelName(config)}</span>
@@ -62,6 +67,8 @@ export function TurnBanner({ state, compact = false }: { state: GameState; compa
             <span className="font-bold">{commander}</span> {state.gameMode === 'versus' ? 'awaits your orders' : 'takes command'}
           </span>
         )}
+      </div>
+      </div>
       </div>
     </div>
   );
