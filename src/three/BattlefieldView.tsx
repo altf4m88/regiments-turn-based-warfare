@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Crosshair, Eye, Grid3x3, Map as MapIcon, Sparkles, Tag, Video, Volume2, VolumeX } from 'lucide-react';
 import { GameState, Nation, Tile } from '../game/types';
-import { NATIONS, getTerrainDefenseBonus, getTerrainMpCost, isAiPlayer, nationOf } from '../game/engine';
+import { NATIONS, getTerrainDefenseBonus, getTerrainMpCost, nationOf } from '../game/engine';
 import { Battlefield, BattlefieldOptions, CameraView } from './scene/Battlefield';
 import { HoverInfo } from './scene/highlights';
 import { MAP_N, TILE } from './core/constants';
@@ -10,7 +10,7 @@ interface Props {
   gameState: GameState;
   mapRotation: number;
   aiMode: boolean;
-  /** Phone-sized layout: icon-only toolbar, a smaller minimap and banner. */
+  /** Phone-sized layout: icon-only toolbar and a smaller minimap. */
   compact?: boolean;
   onTileClick: (x: number, y: number) => void;
   onTileHover: (tile: Tile | null) => void;
@@ -149,8 +149,6 @@ export default function BattlefieldView({ gameState, mapRotation, aiMode, compac
   // Touch screens get tap and pinch wording in the help.
   const touch = useMemo(() => typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches, []);
   const [failed, setFailed] = useState<string | null>(null);
-  const [banner, setBanner] = useState<{ key: number; turn: number; player: number } | null>(null);
-  const lastTurnRef = useRef<string | null>(null);
 
   useEffect(() => {
     const el = mountRef.current;
@@ -187,18 +185,6 @@ export default function BattlefieldView({ gameState, mapRotation, aiMode, compac
   useEffect(() => {
     bfRef.current?.update(gameState);
   }, [gameState]);
-
-  // Announce each new turn with a banner across the battlefield.
-  useEffect(() => {
-    const key = `${gameState.turn}:${gameState.currentPlayer}`;
-    if (lastTurnRef.current === key) return;
-    const first = lastTurnRef.current === null;
-    lastTurnRef.current = key;
-    if (first || gameState.winner) return;
-    setBanner({ key: Date.now(), turn: gameState.turn, player: gameState.currentPlayer });
-    const t = setTimeout(() => setBanner(null), 2600);
-    return () => clearTimeout(t);
-  }, [gameState.turn, gameState.currentPlayer, gameState.winner]);
 
   useEffect(() => {
     bfRef.current?.setRotation(mapRotation);
@@ -286,20 +272,6 @@ export default function BattlefieldView({ gameState, mapRotation, aiMode, compac
           Wheel: zoom · WASD: pan · Q/E: rotate · Dbl-click / F: focus · Home: overview</>
         )}
       </div>
-
-      {/* Turn banner */}
-      {banner && (
-        <div key={banner.key} className="bf-turn-banner absolute left-1/2 top-[18%] z-20 pointer-events-none text-center">
-          <div className="text-[10px] font-mono uppercase tracking-[0.4em] text-[#E4E3E0]/80">Turn {banner.turn}</div>
-          <div className={(compact ? 'text-2xl ' : 'text-4xl ') + 'font-serif italic font-bold tracking-tight whitespace-nowrap ' + ARMY[nationOf(gameState, banner.player)].banner}>
-            The {NATIONS[nationOf(gameState, banner.player)].adjective} march
-          </div>
-          <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-[#E4E3E0]/70 mt-1">
-            Player {banner.player}
-            {gameState.gameMode === 'versus' && (isAiPlayer(gameState, banner.player) ? ' · AI general' : ' · Your command')}
-          </div>
-        </div>
-      )}
 
       {/* Hover tooltip */}
       {tooltip && hover && (

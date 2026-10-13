@@ -149,6 +149,8 @@ export interface GameState {
   aiConfigs: { [key: number]: AiConfig };
   monologueHistory: MonologueEntry[];
   nations: { [player: number]: Nation };
+  /** The name each player's general goes by, e.g. "General Wellington". */
+  commanders?: { [player: number]: string };
   /** Highest number handed out per id prefix ("p1-l": 7), so reinforcement ids are never reused. */
   idCounters?: Record<string, number>;
 }

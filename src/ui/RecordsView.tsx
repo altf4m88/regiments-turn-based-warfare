@@ -5,6 +5,7 @@ import { BattleRecord, GeneralInfo, exportBattles, importBattles, storeBattles }
 import { buildLeaderboard } from '../game/leaderboard';
 import { GameMode } from '../game/types';
 import { ARMY_COLOR } from './StrengthChart';
+import { ProviderIcon } from './ProviderIcon';
 import { REASON_TEXT } from './BattleReport';
 
 const fmt = (n: number) => Math.round(n).toLocaleString('en-US');
@@ -18,7 +19,8 @@ const General = ({ who, sub = true, wrap = false }: { who: GeneralInfo; sub?: bo
   <span className="min-w-0">
     <span className={'block font-bold ' + (wrap ? 'break-words' : 'truncate')}>{who.kind === 'human' ? (who.label === 'You' ? 'You' : 'Human') : who.label}</span>
     {sub && (
-      <span className="block text-[9px] uppercase text-[#141414]/55">
+      <span className="flex items-center gap-1 text-[9px] uppercase text-[#141414]/55">
+        <ProviderIcon provider={who.provider} size={10} />
         {who.kind === 'human' ? 'Human player' : `AI · ${who.provider === 'claude' ? 'Claude' : who.provider === 'gemini' ? 'Gemini' : 'unknown provider'}`}
       </span>
     )}
@@ -252,7 +254,7 @@ export function RecordsView({ records, onChange, onClose, onPlayMap }: {
                         <svg width="12" height="4" aria-hidden className="shrink-0"><line x1="1" y1="2" x2="11" y2="2" stroke={ARMY_COLOR[b.sides[p].nation]} strokeWidth="2.5" strokeLinecap="round" /></svg>
                         <span className="min-w-0">
                           <span className="font-bold uppercase">P{p} {NATIONS[b.sides[p].nation].adjective}</span>{' '}
-                          <span className="text-[#141414]/80">{b.sides[p].general}</span>
+                          <span className="text-[#141414]/80">{b.sides[p].commander ? `${b.sides[p].commander} · ` : ''}{b.sides[p].general}</span>
                           <span className="text-[#141414]/55"> · lost {fmt(b.sides[p].lostMen)}</span>
                           {b.winner === p && <span className="ml-1 px-1 text-[9px] bg-[#141414] text-[#E4E3E0] uppercase">won</span>}
                         </span>
@@ -288,7 +290,8 @@ export function RecordsView({ records, onChange, onClose, onPlayMap }: {
                             <svg width="12" height="4" aria-hidden className="shrink-0"><line x1="1" y1="2" x2="11" y2="2" stroke={ARMY_COLOR[b.sides[p].nation]} strokeWidth="2.5" strokeLinecap="round" /></svg>
                             <span className="uppercase font-bold">{NATIONS[b.sides[p].nation].adjective}</span>
                           </span>
-                          <span className="block text-[#141414]/80 truncate max-w-[16rem]">{b.sides[p].general}</span>
+                          {b.sides[p].commander && <span className="block font-serif italic text-xs truncate max-w-[16rem]">{b.sides[p].commander}</span>}
+                          <span className="flex items-center gap-1 text-[#141414]/80 truncate max-w-[16rem]"><ProviderIcon provider={b.sides[p].who.provider} size={10} />{b.sides[p].general}</span>
                           <span className="block text-[9px] text-[#141414]/55">lost {fmt(b.sides[p].lostMen)} men</span>
                         </td>
                       ))}

@@ -189,9 +189,9 @@
 
 .bf-turn-banner {
   transform: translateX(-50%);
-  padding: 10px 28px 12px;
+  padding: 10px 64px 12px;
   background: linear-gradient(90deg, transparent, rgba(20, 20, 20, 0.82) 18%, rgba(20, 20, 20, 0.82) 82%, transparent);
-  animation: bf-banner 2.6s ease-in-out forwards;
+  animation: bf-banner 3.2s ease-in-out forwards;
 }
 
 @keyframes bf-banner {

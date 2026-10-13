@@ -1,5 +1,5 @@
 import { describeModel, resolveAiModel } from '../ai/models';
-import { RULES_VERSION, isAiPlayer, nationOf, sideStats, victoryReason, VictoryReason } from './engine';
+import { RULES_VERSION, commanderOf, isAiPlayer, nationOf, sideStats, victoryReason, VictoryReason } from './engine';
 import { AiProvider, GameMode, GameState, Nation, ThinkingLevelSetting } from './types';
 
 /** Who commanded a side: a person, or an AI general with its provider, model and thinking level. */
@@ -17,6 +17,8 @@ export interface SideRecord {
   /** Display label, kept for older records and quick reading; `who` has the details. */
   general: string;
   who: GeneralInfo;
+  /** The commander's name in that battle, e.g. "Marshal Ney". */
+  commander?: string;
   men: number;
   regiments: number;
   lostMen: number;
@@ -73,7 +75,7 @@ export const recordBattle = (state: GameState): BattleRecord | null => {
     const s = sideStats(state, p);
     const who = generalInfo(state, p);
     return {
-      nation: nationOf(state, p), general: who.label, who,
+      nation: nationOf(state, p), general: who.label, who, commander: commanderOf(state, p),
       men: s.men, regiments: s.regiments, lostMen: s.lostMen, lostRegiments: s.lostRegiments,
       raised: s.raised, attacks: s.attacks, charges: s.charges, supplyEarned: s.supplyEarned,
       capturePointTurns: s.capturePointTurns, ordersRejected: s.ordersRejected,
@@ -125,7 +127,7 @@ export const normalizeRecord = (raw: unknown): BattleRecord | null => {
         ? { kind: 'human', label }
         : { kind: 'ai', label, provider: /claude/i.test(label) ? 'claude' : /gemini/i.test(label) ? 'gemini' : undefined };
     return {
-      nation: s.nation, general: label, who,
+      nation: s.nation, general: label, who, commander: str(s.commander, 40) || undefined,
       men: num(s.men), regiments: num(s.regiments), lostMen: num(s.lostMen), lostRegiments: num(s.lostRegiments),
       raised: num(s.raised), attacks: num(s.attacks), charges: num(s.charges), supplyEarned: num(s.supplyEarned),
       capturePointTurns: num(s.capturePointTurns), ordersRejected: num(s.ordersRejected),

@@ -54,14 +54,16 @@ import { twMerge } from 'tailwind-merge';
 
 import { Client } from "langsmith";
 import { Regiment, Tile, GameState, GameMode, UnitType, Facing, GameAnimation, AiConfig, AiProvider, Nation, ThinkingLevelSetting } from './game/types';
-import { getInitialState, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath, resolveAttack, nextRegimentId, parseUnitType, NATIONS, nationOf, nationsFor, isAiPlayer, aiPlayerOf, humanPlayerOf, VERSUS_AI_PLAYER, idleRegiments, describeIdle, bumpTally, snapshot, sideStats, victoryReason, randomSeed, normalizeSeed } from './game/engine';
-import { AI_MODELS, AI_PROVIDERS, THINKING_LEVELS, describeModel, resolveAiModel } from './ai/models';
+import { getInitialState, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath, resolveAttack, nextRegimentId, parseUnitType, NATIONS, nationOf, nationsFor, isAiPlayer, aiPlayerOf, humanPlayerOf, VERSUS_AI_PLAYER, idleRegiments, describeIdle, COMMANDERS, DEFAULT_COMMANDERS, normalizeCommander, commanderOf, bumpTally, snapshot, sideStats, victoryReason, randomSeed, normalizeSeed } from './game/engine';
+import { AI_MODELS, AI_PROVIDERS, THINKING_LEVELS, describeModel, modelName, resolveAiModel } from './ai/models';
 import { AiSession, startAiSession } from './ai/session';
 import { Markdown, plainText } from './ui/Markdown';
 import { BattleReport, CasualtyPanel, MapPreview } from './ui/BattleReport';
 import { BattleRecord, generalOf, loadBattles, recordBattle, saveBattle } from './game/history';
 import { startsCompact, useCompact } from './ui/useCompact';
 import { RecordsView } from './ui/RecordsView';
+import { TurnBanner } from './ui/TurnBanner';
+import { ProviderIcon } from './ui/ProviderIcon';
 
 // The 3D battlefield (three.js) is code-split so the 2D view stays light.
 const BattlefieldView = lazy(() => import('./three/BattlefieldView'));
@@ -291,6 +293,7 @@ const AiConfigModal = ({
   nations,
   players = [1, 2],
   onAiPlayerChange,
+  commanders,
 }: { 
   isOpen: boolean; 
   onClose: () => void; 
@@ -301,6 +304,8 @@ const AiConfigModal = ({
   players?: number[];
   /** Human vs AI, before the battle: lets you choose which side you command. */
   onAiPlayerChange?: (aiPlayer: number) => void;
+  /** Each player's commander, shown on their general's panel. */
+  commanders?: { [player: number]: string };
 }) => {
   const versus = players.length === 1;
   const [localConfigs, setLocalConfigs] = useState(aiConfigs);
@@ -350,6 +355,7 @@ const AiConfigModal = ({
             <div key={playerNum} className="space-y-4 p-4 border border-[#141414]/20 bg-white/50">
               <h3 className={cn("font-bold uppercase text-sm border-b border-[#141414] pb-2", SIDE_UI[nations[playerNum]].text)}>
                 Player {playerNum} · {NATIONS[nations[playerNum]].adjective}{versus && ' · AI general'}
+                {commanders?.[playerNum] && <span className="block mt-0.5 normal-case font-serif italic text-base text-[#141414]">{commanders[playerNum]}</span>}
               </h3>
               
               <div className="space-y-1">
@@ -366,7 +372,7 @@ const AiConfigModal = ({
                         ai.provider === p ? "bg-[#141414] text-[#E4E3E0]" : "bg-white hover:bg-[#141414]/10"
                       )}
                     >
-                      <span className="block text-xs font-bold uppercase">{AI_PROVIDERS[p].label}</span>
+                      <span className="flex items-center gap-1.5 text-xs font-bold uppercase"><ProviderIcon provider={p} size={14} /> {AI_PROVIDERS[p].label}</span>
                       <span className="block text-[9px] font-mono uppercase opacity-60">{AI_PROVIDERS[p].vendor}</span>
                     </button>
                   ))}
@@ -524,6 +530,9 @@ In this battle your opponent is a human general, who will punish any regiment yo
 - Do not forget your cavalry. Hussars and chasseurs have 6 MP: every turn, send them round the flanks, after enemy light infantry and cannon, into the flank of line infantry, or toward the enemy Command Center.
 - Reinforcements count too: from the turn after they arrive, march them to the fight.`;
 
+/** Player 1's army first, then the other. */
+const nationsOrder = (p1: Nation): Nation[] => (p1 === 'british' ? ['british', 'french'] : ['french', 'british']);
+
 /** CLI commands that only show information, so they also work on an AI general's turn. */
 /** Human vs AI: the AI general's regiments not yet used this turn, shown with every reply. */
 const rollCall = (state: GameState, lastIteration: boolean) => {
@@ -583,6 +592,18 @@ export default function App() {
       return 'british';
     }
   });
+  // The general commanding each army, kept per army in this browser (historical names by default).
+  const [commanderNames, setCommanderNames] = useState<Record<Nation, string>>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('regiments.commanders') ?? '{}');
+      return {
+        british: typeof saved.british === 'string' ? saved.british : DEFAULT_COMMANDERS.british,
+        french: typeof saved.french === 'string' ? saved.french : DEFAULT_COMMANDERS.french,
+      };
+    } catch {
+      return { ...DEFAULT_COMMANDERS };
+    }
+  });
   const aiTurnRef = useRef<{ turn: number, player: number } | null>(null);
   // Bumped when a battle is abandoned, so an AI turn still in flight stops touching the game.
   const battleRef = useRef(0);
@@ -612,6 +633,14 @@ export default function App() {
 
   useEffect(() => {
     try {
+      localStorage.setItem('regiments.commanders', JSON.stringify(commanderNames));
+    } catch {
+      /* storage unavailable */
+    }
+  }, [commanderNames]);
+
+  useEffect(() => {
+    try {
       localStorage.setItem('regiments.p1Nation', p1Nation);
     } catch {
       /* storage unavailable */
@@ -633,8 +662,10 @@ export default function App() {
     setReportHidden(false);
     const seed = opts.seed ?? (normalizeSeed(seedInput) || randomSeed());
     const aiPlayer = mode === 'versus' ? opts.aiPlayer ?? versusAiPlayer : undefined;
+    const nations = opts.nations ?? nationsFor(p1Nation);
+    const commander = (p: number) => normalizeCommander(commanderNames[nations[p]]) || DEFAULT_COMMANDERS[nations[p]];
     setMapRotation(aiPlayer === 1 ? 180 : 0);
-    setGameState({ ...getInitialState(opts.nations ?? nationsFor(p1Nation), seed), gameMode: mode, aiConfigs, aiPlayer });
+    setGameState({ ...getInitialState(nations, seed), gameMode: mode, aiConfigs, aiPlayer, commanders: { 1: commander(1), 2: commander(2) } });
   };
 
   /**
@@ -1996,6 +2027,46 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
             </p>
           </div>
 
+          <div className="space-y-2">
+            <p className="text-[10px] uppercase tracking-widest font-mono opacity-50 text-center">Commanders</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {nationsOrder(p1Nation).map(n => {
+                const player = n === p1Nation ? 1 : 2;
+                const roll = () => {
+                  const others = COMMANDERS[n].filter(c => c !== normalizeCommander(commanderNames[n]));
+                  setCommanderNames(c => ({ ...c, [n]: others[Math.floor(Math.random() * others.length)] }));
+                };
+                return (
+                  <div key={n} className="flex items-center gap-2 border border-[#141414]/15 pl-3 pr-1 py-1">
+                    <span className={cn("w-3 h-3 shrink-0", n === 'british' ? "bg-[#b02a20]" : "bg-[#23376e]")} />
+                    <span className="text-[9px] font-mono uppercase opacity-60 shrink-0">P{player}</span>
+                    <input
+                      list={`commanders-${n}`}
+                      value={commanderNames[n]}
+                      onChange={e => setCommanderNames(c => ({ ...c, [n]: e.target.value.slice(0, 40) }))}
+                      onBlur={() => setCommanderNames(c => ({ ...c, [n]: normalizeCommander(c[n]) || DEFAULT_COMMANDERS[n] }))}
+                      placeholder={DEFAULT_COMMANDERS[n]}
+                      aria-label={`${NATIONS[n].adjective} commander`}
+                      className="flex-1 min-w-0 bg-transparent font-serif italic text-lg py-1 outline-none focus:underline"
+                    />
+                    <datalist id={`commanders-${n}`}>
+                      {COMMANDERS[n].map(c => <option key={c} value={c} />)}
+                    </datalist>
+                    <button
+                      onClick={roll}
+                      className="h-9 w-9 shrink-0 flex items-center justify-center hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
+                      title={`Another ${NATIONS[n].adjective} commander of the period`}
+                      aria-label={`Another ${NATIONS[n].adjective} commander`}
+                    >
+                      <Shuffle size={14} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-[10px] font-mono text-center opacity-50">Pick a marshal or general of the period, or type any name.</p>
+          </div>
+
           <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-5 border border-[#141414]/15 p-4">
             {(() => {
               const code = normalizeSeed(seedInput);
@@ -2069,6 +2140,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
             onClose={() => setShowAiConfig(false)}
             aiConfigs={gameState.aiConfigs}
             nations={nationsFor(p1Nation)}
+            commanders={{ 1: normalizeCommander(commanderNames[p1Nation]) || DEFAULT_COMMANDERS[p1Nation], 2: normalizeCommander(commanderNames[nationsFor(p1Nation)[2]]) || DEFAULT_COMMANDERS[nationsFor(p1Nation)[2]] }}
             players={aiSetupMode === 'versus' ? [versusAiPlayer] : [1, 2]}
             onAiPlayerChange={setVersusAiPlayer}
             onSave={(configs) => {
@@ -2110,12 +2182,13 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
         <h1 className="hidden sm:block text-lg font-bold tracking-tighter uppercase italic font-serif shrink-0">Regiments</h1>
         <div className="flex-1 min-w-0 flex items-center gap-3 overflow-x-auto">
           <div className="leading-tight shrink-0">
-            <p className={cn("text-sm font-bold uppercase whitespace-nowrap", side(gameState.currentPlayer).text)}>
-              P{gameState.currentPlayer} · {NATIONS[nationOf(gameState, gameState.currentPlayer)].adjective}
+            <p className={cn("text-sm font-bold font-serif italic whitespace-nowrap max-w-[11rem] truncate", side(gameState.currentPlayer).text)}>
+              {commanderOf(gameState, gameState.currentPlayer)}
             </p>
-            <p className="text-[9px] font-mono uppercase opacity-60 whitespace-nowrap flex items-center gap-1">
-              {isAiThinking && <Cpu size={9} className="animate-spin" />}
-              {!humanTurn ? describeModel(gameState.aiConfigs[gameState.currentPlayer]) : gameState.gameMode === 'versus' ? 'Your command' : 'To move'}
+            <p className="text-[9px] font-mono uppercase opacity-70 whitespace-nowrap flex items-center gap-1">
+              {!humanTurn
+                ? <><ProviderIcon provider={resolveAiModel(gameState.aiConfigs[gameState.currentPlayer]).provider} size={10} className={isAiThinking ? 'animate-pulse' : ''} /> {describeModel(gameState.aiConfigs[gameState.currentPlayer])}</>
+                : `P${gameState.currentPlayer} · ${NATIONS[nationOf(gameState, gameState.currentPlayer)].adjective}${gameState.gameMode === 'versus' ? ' · your command' : ''}`}
             </p>
           </div>
           {[
@@ -2256,12 +2329,12 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
             <p className="text-xl font-bold font-mono">{gameState.turn}</p>
           </div>
           <div className="text-right">
-            <p className="text-[10px] uppercase opacity-50 font-mono italic">Active Player · {NATIONS[nationOf(gameState, gameState.currentPlayer)].adjective}</p>
+            <p className="text-[10px] uppercase opacity-50 font-mono italic">Player {gameState.currentPlayer} · {NATIONS[nationOf(gameState, gameState.currentPlayer)].adjective}</p>
             <p className={cn(
-              "text-xl font-bold uppercase",
+              "text-xl font-bold font-serif italic whitespace-nowrap",
               side(gameState.currentPlayer).text
             )}>
-              Player {gameState.currentPlayer}
+              {commanderOf(gameState, gameState.currentPlayer)}
             </p>
             {gameState.gameMode === 'versus' && humanTurn && (
               <p className="text-[9px] uppercase font-mono tracking-wider opacity-60 flex items-center justify-end gap-1 whitespace-nowrap">
@@ -2270,10 +2343,9 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
             )}
             {!humanTurn && (() => {
               const ai = resolveAiModel(gameState.aiConfigs[gameState.currentPlayer]);
-              const model = AI_MODELS[ai.provider].find(m => m.id === ai.model)?.label.replace(/ \(.*\)$/, '') ?? ai.model;
               return (
-                <p className="text-[9px] uppercase font-mono tracking-wider opacity-60 flex items-center justify-end gap-1 whitespace-nowrap">
-                  <Cpu size={10} /> {model} · {ai.thinkingLevel}
+                <p className="text-[9px] uppercase font-mono tracking-wider opacity-70 flex items-center justify-end gap-1 whitespace-nowrap">
+                  <ProviderIcon provider={ai.provider} size={12} /> {modelName(gameState.aiConfigs[gameState.currentPlayer])} · {ai.thinkingLevel}
                 </p>
               );
             })()}
@@ -2330,7 +2402,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
               )}
               aria-label="Show the AI general's dispatch"
             >
-              <Cpu size={12} /> General {gameState.currentPlayer}'s dispatch
+              <ProviderIcon provider={resolveAiModel(gameState.aiConfigs[gameState.currentPlayer]).provider} size={12} /> {commanderOf(gameState, gameState.currentPlayer)}'s dispatch
               <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
             </motion.button>
           ) : (
@@ -2346,7 +2418,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
               )}
             >
               <div className="flex items-center justify-between gap-2 px-4 pt-3 font-bold uppercase text-[9px] tracking-wider opacity-60">
-                <span className="flex items-center gap-2"><Cpu size={10} /> AI General {gameState.currentPlayer} · Dispatch</span>
+                <span className="flex items-center gap-2"><ProviderIcon provider={resolveAiModel(gameState.aiConfigs[gameState.currentPlayer]).provider} size={11} /> {commanderOf(gameState, gameState.currentPlayer)} · Dispatch</span>
                 <button onClick={() => setDispatchMinimized(true)} className="p-0.5 hover:opacity-100" aria-label="Minimise the dispatch">
                   <Minus size={12} />
                 </button>
@@ -2795,6 +2867,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
         onClose={() => setShowAiConfig(false)}
         aiConfigs={gameState.aiConfigs}
         nations={gameState.nations}
+        commanders={{ 1: commanderOf(gameState, 1), 2: commanderOf(gameState, 2) }}
         players={gameState.gameMode === 'versus' ? [aiPlayerOf(gameState)] : [1, 2]}
         onSave={(configs) => {
           setGameState(prev => ({ ...prev, aiConfigs: configs }));
@@ -2904,7 +2977,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
                   return (
                     <section>
                       <h2 className="flex items-center justify-between text-[11px] uppercase tracking-widest opacity-50 font-serif italic mb-4">
-                        <span>General {latest.player}'s Dispatch</span>
+                        <span>{commanderOf(gameState, latest.player)}'s dispatch</span>
                         <span className="not-italic font-mono text-[9px]">Turn {latest.turn}</span>
                       </h2>
                       <div className={cn("p-3 border-l-2 max-h-[38vh] overflow-y-auto custom-scrollbar", side(latest.player).archive)}>
@@ -2941,7 +3014,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
                                 side(m.player).archive
                               )}>
                                 <div className="flex justify-between items-center mb-1 opacity-60 font-bold uppercase text-[8px]">
-                                  <span>Turn {m.turn} - Player {m.player}</span>
+                                  <span>Turn {m.turn} · {commanderOf(gameState, m.player)}</span>
                                   <span>{new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                                 </div>
                                 <Markdown text={m.text} className="space-y-1 font-serif italic text-[#141414]/80" />
@@ -3027,6 +3100,8 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
           )}
         </AnimatePresence>
       </main>
+
+      <TurnBanner state={gameState} compact={compact} />
 
       {/* Phone command bar: the panels, the selected regiment's orders and End Turn, within thumb's reach */}
       {compact && (

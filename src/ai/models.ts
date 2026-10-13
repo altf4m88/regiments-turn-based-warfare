@@ -61,3 +61,9 @@ export const describeModel = (config: AiConfig) => {
   const label = AI_MODELS[ai.provider].find(m => m.id === ai.model)?.label.replace(/ \(.*\)$/, '') ?? ai.model;
   return `${label} · ${ai.thinkingLevel}`;
 };
+
+/** Just the model's name, e.g. "Claude Sonnet 5.5". */
+export const modelName = (config: AiConfig) => {
+  const ai = resolveAiModel(config);
+  return AI_MODELS[ai.provider].find(m => m.id === ai.model)?.label.replace(/ \(.*\)$/, '') ?? ai.model;
+};

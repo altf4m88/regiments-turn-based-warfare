@@ -87,6 +87,28 @@ export const nationsFor = (player1: Nation): { [player: number]: Nation } =>
 export const nationOf = (state: Pick<GameState, 'nations'>, player: number): Nation =>
   state.nations?.[player] ?? DEFAULT_NATIONS[player] ?? 'british';
 
+/** Famous commanders of each army of the period, offered as names for the generals. */
+export const COMMANDERS: Record<Nation, string[]> = {
+  british: [
+    'General Wellington', 'General Picton', 'General Hill', 'General Uxbridge',
+    'General Moore', 'General Graham', 'General Beresford', 'General Craufurd',
+  ],
+  french: [
+    'Emperor Napoléon', 'Marshal Ney', 'Marshal Davout', 'Marshal Soult',
+    'Marshal Murat', 'Marshal Lannes', 'Marshal Masséna', 'Marshal Grouchy',
+  ],
+};
+
+/** Waterloo's two commanders, until a player chooses others. */
+export const DEFAULT_COMMANDERS: Record<Nation, string> = { british: 'General Wellington', french: 'Emperor Napoléon' };
+
+/** A commander's name as typed: single spaces, at most 40 characters. */
+export const normalizeCommander = (name: string) => name.replace(/\s+/g, ' ').trim().slice(0, 40);
+
+/** Who commands a player's army in this battle: the chosen name, or the army's default. */
+export const commanderOf = (state: Pick<GameState, 'nations' | 'commanders'>, player: number) =>
+  normalizeCommander(state.commanders?.[player] ?? '') || DEFAULT_COMMANDERS[nationOf(state, player)];
+
 const generateRegimentName = (type: UnitType, nation: Nation, index: number): string => {
   const british = nation === 'british';
   const names = {
