@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { GameState } from '../../game/types';
-import { nationOf } from '../../game/engine';
+import { VERSUS_HUMAN_PLAYER, nationOf } from '../../game/engine';
 import { MAP_N, TILE, inMap, tileCenter } from '../core/constants';
 import { flagUniforms } from '../models/flags';
 import { ActionEvent, UnitManager } from '../units/UnitManager';
@@ -125,7 +125,7 @@ export class Battlefield {
     if (rebuilt) {
       this.sig = sig;
       this.buildWorld(state);
-      this.focusOnPlayer(state.currentPlayer, false);
+      this.focusOnPlayer(this.viewPlayer(state), false);
     } else if (this.state && state.currentPlayer !== this.state.currentPlayer && !state.winner) {
       this.turnCamera(state);
     }
@@ -183,9 +183,14 @@ export class Battlefield {
     else this.rig.rotateTo((deg * Math.PI) / 180);
   }
 
-  /** New turn: swing round behind the army whose turn it is, looking towards the enemy. */
+  /** The army the camera sits behind: in Human vs AI always the person's, otherwise whoever is to move. */
+  private viewPlayer(state: GameState) {
+    return state.gameMode === 'versus' ? VERSUS_HUMAN_PLAYER : state.currentPlayer;
+  }
+
+  /** New turn: swing round behind the army whose turn it is (or the person's, against an AI), looking towards the enemy. */
   private turnCamera(state: GameState) {
-    const player = state.currentPlayer;
+    const player = this.viewPlayer(state);
     const mine = state.regiments.filter(r => r.owner === player);
     let cx = (MAP_N * TILE) / 2, cz = player === 2 ? TILE * 4 : MAP_N * TILE - TILE * 4;
     if (mine.length) {

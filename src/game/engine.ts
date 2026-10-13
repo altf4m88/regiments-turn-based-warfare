@@ -363,6 +363,14 @@ export const getInitialState = (nations: { [player: number]: Nation } = DEFAULT_
   };
 };
 
+/** In Human vs AI, the person commands Player 1 and the LLM general commands Player 2. */
+export const VERSUS_HUMAN_PLAYER = 1;
+export const VERSUS_AI_PLAYER = 2;
+
+/** Whether an LLM general commands this player: both in AI Gameplay, Player 2 in Human vs AI. */
+export const isAiPlayer = (state: Pick<GameState, 'gameMode'>, player: number) =>
+  state.gameMode === 'ai' || (state.gameMode === 'versus' && player === VERSUS_AI_PLAYER);
+
 /**
  * Whether an attack from (x, y) hits a regiment in the flank. Its front is the 90° cone
  * ahead of its facing (facing north: a smaller y, and no more columns to the side than

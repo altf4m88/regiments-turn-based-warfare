@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Crosshair, Eye, Grid3x3, Map as MapIcon, Sparkles, Tag, Video, Volume2, VolumeX } from 'lucide-react';
 import { GameState, Nation, Tile } from '../game/types';
-import { NATIONS, getTerrainDefenseBonus, getTerrainMpCost, nationOf } from '../game/engine';
+import { NATIONS, getTerrainDefenseBonus, getTerrainMpCost, isAiPlayer, nationOf } from '../game/engine';
 import { Battlefield, BattlefieldOptions, CameraView } from './scene/Battlefield';
 import { HoverInfo } from './scene/highlights';
 import { MAP_N, TILE } from './core/constants';
@@ -279,7 +279,10 @@ export default function BattlefieldView({ gameState, mapRotation, aiMode, onTile
           <div className={'text-4xl font-serif italic font-bold tracking-tight ' + ARMY[nationOf(gameState, banner.player)].banner}>
             The {NATIONS[nationOf(gameState, banner.player)].adjective} march
           </div>
-          <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-[#E4E3E0]/70 mt-1">Player {banner.player}</div>
+          <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-[#E4E3E0]/70 mt-1">
+            Player {banner.player}
+            {gameState.gameMode === 'versus' && (isAiPlayer(gameState, banner.player) ? ' · AI general' : ' · Your command')}
+          </div>
         </div>
       )}
 

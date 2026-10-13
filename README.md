@@ -2,8 +2,17 @@
 It's kinda mix of chess and Total War mechanics, you move your Regiments per turn, manage supply and capture points.
 This game specifically made to be playable by Large-Language Model, my purpose is to study LLM tactical awareness and how LLM compete strategically to achieve desired objectives with resource in mind.
 
+# Game modes
+On the start screen, choose the army Player 1 commands (British or French; Player 2 takes the other), then a mode:
+
+- **Manual Play**: you command both armies, taking turns at the same screen.
+- **Human vs AI**: you command Player 1, and an AI general commands Player 2. Choose its provider, model and thinking level in the dialog that opens. On its turn the general moves by itself: you can watch, select regiments to inspect them and use the CLI's information commands (`ls`, `status` and so on), but your orders wait until your turn. In 3D the camera stays on your side of the field and follows the enemy's moves.
+- **AI Gameplay**: an AI general commands each army, and you watch.
+
+**Pause AI** in the header stops the AI generals once the current turn ends. If an AI general's turn fails, for example because of a missing key, an API error or a rate limit, the battle waits for you: **Retry AI turn** runs it again from where it stopped, and so does saving new settings in *AI Settings*.
+
 # AI Generals
-In *AI Settings*, each player's general runs on **Gemini** (Google) or **Claude** (Anthropic), so you can pit one against the other:
+In *AI Settings*, each AI player's general runs on **Gemini** (Google) or **Claude** (Anthropic), so you can pit one against the other:
 
 | Provider | Models | Key |
 | :--- | :--- | :--- |

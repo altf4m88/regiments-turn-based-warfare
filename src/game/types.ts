@@ -88,6 +88,8 @@ export interface MonologueEntry {
   timestamp: number;
 }
 
+export type GameMode = 'manual' | 'ai' | 'versus';
+
 export interface GameState {
   map: Tile[][];
   regiments: Regiment[];
@@ -101,7 +103,11 @@ export interface GameState {
   capturePointTurns: number;
   battlefieldLogs: string[];
   cliHistory: string[];
-  gameMode: 'manual' | 'ai' | null;
+  /**
+   * 'manual': people command both armies. 'ai': an LLM general commands each army.
+   * 'versus': a person commands Player 1 against an LLM general commanding Player 2.
+   */
+  gameMode: GameMode | null;
   aiConfigs: { [key: number]: AiConfig };
   monologueHistory: MonologueEntry[];
   nations: { [player: number]: Nation };

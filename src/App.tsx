@@ -48,8 +48,8 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
 import { Client } from "langsmith";
-import { Regiment, Tile, GameState, UnitType, Facing, GameAnimation, AiConfig, AiProvider, Nation, ThinkingLevelSetting } from './game/types';
-import { getInitialState, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath, resolveAttack, nextRegimentId, parseUnitType, NATIONS, nationOf, nationsFor } from './game/engine';
+import { Regiment, Tile, GameState, GameMode, UnitType, Facing, GameAnimation, AiConfig, AiProvider, Nation, ThinkingLevelSetting } from './game/types';
+import { getInitialState, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath, resolveAttack, nextRegimentId, parseUnitType, NATIONS, nationOf, nationsFor, isAiPlayer, VERSUS_AI_PLAYER } from './game/engine';
 import { AI_MODELS, AI_PROVIDERS, THINKING_LEVELS, resolveAiModel } from './ai/models';
 import { AiSession, startAiSession } from './ai/session';
 import { Markdown, plainText } from './ui/Markdown';
@@ -279,14 +279,18 @@ const AiConfigModal = ({
   onClose, 
   aiConfigs, 
   onSave,
-  nations
+  nations,
+  players = [1, 2],
 }: { 
   isOpen: boolean; 
   onClose: () => void; 
   aiConfigs: { [key: number]: AiConfig };
   onSave: (configs: { [key: number]: AiConfig }) => void;
   nations: { [player: number]: Nation };
+  /** The players commanded by an LLM general: both, or only your opponent in Human vs AI. */
+  players?: number[];
 }) => {
+  const versus = players.length === 1;
   const [localConfigs, setLocalConfigs] = useState(aiConfigs);
 
   if (!isOpen) return null;
@@ -296,23 +300,25 @@ const AiConfigModal = ({
       <motion.div 
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
-        className="bg-[#E4E3E0] border-2 border-[#141414] p-8 max-w-2xl w-full max-h-full overflow-y-auto shadow-2xl flex flex-col gap-6"
+        className={cn("bg-[#E4E3E0] border-2 border-[#141414] p-8 w-full max-h-full overflow-y-auto shadow-2xl flex flex-col gap-6", versus ? "max-w-md" : "max-w-2xl")}
       >
         <div className="flex justify-between items-center border-b border-[#141414] pb-4">
-          <h2 className="text-2xl font-bold uppercase tracking-tight">AI General Configuration</h2>
+          <h2 className="text-2xl font-bold uppercase tracking-tight">{versus ? 'Your Opponent' : 'AI General Configuration'}</h2>
           <button onClick={onClose} className="hover:rotate-90 transition-transform">
             <X size={24} />
           </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          {[1, 2].map(playerNum => {
+        <div className={cn("grid grid-cols-1 gap-8", !versus && "md:grid-cols-2")}>
+          {players.map(playerNum => {
             const config = localConfigs[playerNum];
             const ai = resolveAiModel(config);
             const update = (patch: Partial<AiConfig>) => setLocalConfigs(prev => ({ ...prev, [playerNum]: { ...prev[playerNum], ...patch } }));
             return (
             <div key={playerNum} className="space-y-4 p-4 border border-[#141414]/20 bg-white/50">
-              <h3 className={cn("font-bold uppercase text-sm border-b border-[#141414] pb-2", SIDE_UI[nations[playerNum]].text)}>Player {playerNum} · {NATIONS[nations[playerNum]].adjective}</h3>
+              <h3 className={cn("font-bold uppercase text-sm border-b border-[#141414] pb-2", SIDE_UI[nations[playerNum]].text)}>
+                Player {playerNum} · {NATIONS[nations[playerNum]].adjective}{versus && ' · AI general'}
+              </h3>
               
               <div className="space-y-1">
                 <label className="text-[10px] uppercase font-bold opacity-60">AI Provider</label>
@@ -444,7 +450,9 @@ const AiConfigModal = ({
 
         <div className="text-[10px] uppercase opacity-50 font-mono leading-relaxed">
           * Your API keys are kept in memory only and never saved to any server; requests go straight from this browser to Google or Anthropic.
-          Pit Gemini against Claude, or give each side a different model or thinking level, to see how they compete tactically.
+          {versus
+            ? ` You command Player ${3 - players[0]} (${NATIONS[nations[3 - players[0]]].adjective}); this general commands the enemy army.`
+            : ' Pit Gemini against Claude, or give each side a different model or thinking level, to see how they compete tactically.'}
         </div>
 
         <div className="flex gap-4 mt-4">
@@ -455,7 +463,7 @@ const AiConfigModal = ({
             }}
             className="flex-1 bg-[#141414] text-[#E4E3E0] p-3 uppercase font-bold hover:bg-opacity-90 transition-all"
           >
-            Deploy AI Generals
+            {versus ? 'Deploy AI General' : 'Deploy AI Generals'}
           </button>
           <button 
             onClick={onClose}
@@ -468,6 +476,9 @@ const AiConfigModal = ({
     </div>
   );
 };
+
+/** CLI commands that only show information, so they also work on an AI general's turn. */
+const READ_ONLY_COMMANDS = new Set(['help', 'status', 'whoami', 'ls', 'export', 'clear']);
 
 export default function App() {
   const [gameState, setGameState] = useState<GameState>(getInitialState());
@@ -489,6 +500,8 @@ export default function App() {
   });
   const [aiInstructions, setAiInstructions] = useState<string>('');
   const [showAiConfig, setShowAiConfig] = useState(false);
+  // Which battle the start screen's AI settings will begin: AI vs AI, or you against one AI.
+  const [aiSetupMode, setAiSetupMode] = useState<'ai' | 'versus'>('ai');
   const [isArchiveOpen, setIsArchiveOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'3d' | '2d'>(() => {
     try {
@@ -508,6 +521,8 @@ export default function App() {
   // Bumped when a battle is abandoned, so an AI turn still in flight stops touching the game.
   const battleRef = useRef(0);
   const [aiPaused, setAiPaused] = useState(false);
+  // An AI turn that failed (no key, an API error): it waits for a retry rather than looping.
+  const [aiStalled, setAiStalled] = useState(false);
   const side = (player: number) => SIDE_UI[nationOf(gameState, player)];
 
   useEffect(() => {
@@ -538,8 +553,9 @@ export default function App() {
   }, [p1Nation]);
 
   /** Fresh battle with the chosen armies (the map is regenerated too). */
-  const startGame = (mode: 'manual' | 'ai', aiConfigs: { [key: number]: AiConfig }) => {
+  const startGame = (mode: GameMode, aiConfigs: { [key: number]: AiConfig }) => {
     aiTurnRef.current = null;
+    setMapRotation(0);
     setGameState({ ...getInitialState(nationsFor(p1Nation)), gameMode: mode, aiConfigs });
   };
 
@@ -634,13 +650,16 @@ export default function App() {
   };
 
   const selectedUnit = gameState.regiments.find(r => r.id === gameState.selectedUnitId);
+  // On an AI general's turn a person can look over the field, but not give orders.
+  const humanTurn = !isAiPlayer(gameState, gameState.currentPlayer);
+  const commandable = (r: Regiment | undefined): r is Regiment => !!r && humanTurn && r.owner === gameState.currentPlayer;
 
   const handleTileClick = (x: number, y: number) => {
     if (gameState.winner) return;
 
     const unitAtTile = gameState.regiments.find(r => r.x === x && r.y === y);
 
-    if (selectedUnit && selectedUnit.owner === gameState.currentPlayer) {
+    if (commandable(selectedUnit)) {
       if (unitAtTile && unitAtTile.owner !== gameState.currentPlayer) {
         const dist = Math.max(Math.abs(selectedUnit.x - x), Math.abs(selectedUnit.y - y));
         const inFiringLine = isTargetInFiringLine(selectedUnit, x, y);
@@ -694,7 +713,7 @@ export default function App() {
   // In 3D, clicking a distant reachable tile marches there via the engine's `mv`
   // command (same pathfinding and MP rules the CLI and AI generals use).
   const handleTileClick3D = (x: number, y: number) => {
-    if (!gameState.winner && selectedUnit && selectedUnit.owner === gameState.currentPlayer) {
+    if (!gameState.winner && commandable(selectedUnit)) {
       const occupied = gameState.regiments.some(r => r.x === x && r.y === y);
       const dist = Math.max(Math.abs(selectedUnit.x - x), Math.abs(selectedUnit.y - y));
       if (!occupied && dist > 1 && !selectedUnit.isBoxFormation && !selectedUnit.isPalisaded && !selectedUnit.isEntrenched) {
@@ -789,7 +808,7 @@ export default function App() {
   };
 
   const handleRotate = (direction: 'cw' | 'ccw' = 'cw') => {
-    if (!selectedUnit || selectedUnit.owner !== gameState.currentPlayer || selectedUnit.mp < 1) return;
+    if (!commandable(selectedUnit) || selectedUnit.mp < 1) return;
     if (selectedUnit.isPalisaded) {
       addBattlefieldLog(`[${selectedUnit.id}] ${selectedUnit.name} cannot rotate while palisaded!`);
       return;
@@ -857,7 +876,7 @@ export default function App() {
   };
 
   const handleEntrench = () => {
-    if (!selectedUnit || selectedUnit.owner !== gameState.currentPlayer || selectedUnit.mp < 1) return;
+    if (!commandable(selectedUnit) || selectedUnit.mp < 1) return;
     if (selectedUnit.isEntrenched) {
       // Leaving the earthworks costs 1 MP; the regiment can march on with what is left.
       setGameState(prev => ({
@@ -883,7 +902,7 @@ export default function App() {
   };
 
   const handleToggleBox = () => {
-    if (!selectedUnit || selectedUnit.owner !== gameState.currentPlayer || selectedUnit.mp < 1 || selectedUnit.type !== 'line_infantry') return;
+    if (!commandable(selectedUnit) || selectedUnit.mp < 1 || selectedUnit.type !== 'line_infantry') return;
 
     setGameState(prev => ({
       ...prev,
@@ -896,7 +915,7 @@ export default function App() {
   };
 
   const handleTogglePalisade = () => {
-    if (!selectedUnit || selectedUnit.owner !== gameState.currentPlayer || selectedUnit.mp < 1 || selectedUnit.type !== 'cannon') return;
+    if (!commandable(selectedUnit) || selectedUnit.mp < 1 || selectedUnit.type !== 'cannon') return;
 
     setGameState(prev => ({
       ...prev,
@@ -909,6 +928,7 @@ export default function App() {
   };
 
   const handleReinforce = (type: UnitType) => {
+    if (!humanTurn) return;
     const cost = UNIT_COSTS[type];
     if (gameState.supply[gameState.currentPlayer] < cost) {
       addBattlefieldLog(`Insufficient supply for ${type}. Need ${cost}.`);
@@ -1399,6 +1419,13 @@ export default function App() {
   const executeCommand = (cmd: string) => {
     setCommandError(null);
     setGameState(prev => {
+      if (isAiPlayer(prev, prev.currentPlayer)) {
+        const orders = cmd.split('\n').map(l => l.split('#')[0].trim().toLowerCase().split(/\s+/)[0]).filter(a => a && !READ_ONLY_COMMANDS.has(a));
+        if (orders.length) {
+          setCommandError(`The AI general commands Player ${prev.currentPlayer} this turn. Only information commands (${[...READ_ONLY_COMMANDS].join(', ')}) work until it ends.`);
+          return prev;
+        }
+      }
       const { newState, error } = applyCommands(prev, cmd);
       if (error) setCommandError(error);
       return newState;
@@ -1415,6 +1442,7 @@ export default function App() {
     if (!apiKey) {
       addBattlefieldLog(`ERROR: ${AI_PROVIDERS[provider].label} API Key for Player ${gameState.currentPlayer} not found. Please configure AI settings.`);
       setIsAiThinking(false);
+      setAiStalled(true);
       return;
     }
 
@@ -1660,6 +1688,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
     } catch (error: any) {
       console.error("AI Turn Error:", error);
       if (!live()) return;
+      setAiStalled(true);
       if (session?.isRateLimit(error)) {
         addBattlefieldLog(`CRITICAL: AI Player ${gameState.currentPlayer} hit API rate limits. Please wait a minute before trying again or use a paid API key.`);
       } else {
@@ -1679,7 +1708,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
   }, [aiInstructions, getGameStateString, gameState, executeCommand]);
 
   useEffect(() => {
-    if (gameState.gameMode === 'ai' && !gameState.winner && !isAiThinking && !aiPaused) {
+    if (isAiPlayer({ gameMode: gameState.gameMode }, gameState.currentPlayer) && !gameState.winner && !isAiThinking && !aiPaused && !aiStalled) {
       // Check if we've already started processing this turn/player
       if (aiTurnRef.current?.turn === gameState.turn && aiTurnRef.current?.player === gameState.currentPlayer) {
         return;
@@ -1692,7 +1721,13 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
       }, 1000);
       return () => clearTimeout(timer);
     }
-  }, [gameState.gameMode, gameState.currentPlayer, gameState.winner, gameState.turn, isAiThinking, aiPaused, runAiTurn]);
+  }, [gameState.gameMode, gameState.currentPlayer, gameState.winner, gameState.turn, isAiThinking, aiPaused, aiStalled, runAiTurn]);
+
+  /** Runs the current AI general's turn again after it failed, from where it stopped. */
+  const retryAiTurn = () => {
+    aiTurnRef.current = null;
+    setAiStalled(false);
+  };
 
   // Abandons the battle and returns to the start screen. An AI turn still in flight stops
   // there, and the AI settings (keys included) carry over to the next battle.
@@ -1702,6 +1737,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
     setIsAiThinking(false);
     setAiMonologue(null);
     setAiPaused(false);
+    setAiStalled(false);
     setGameState(prev => ({ ...getInitialState(), aiConfigs: prev.aiConfigs }));
   };
 
@@ -1755,25 +1791,36 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <button 
               onClick={() => startGame('manual', gameState.aiConfigs)}
-              className="p-8 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex flex-col items-center gap-4 group"
+              className="p-6 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex flex-col items-center gap-4 group"
             >
-              <Users size={48} className="group-hover:scale-110 transition-transform" />
+              <Users size={44} className="group-hover:scale-110 transition-transform" />
               <div className="text-center">
-                <h2 className="text-xl font-bold uppercase">Manual Play</h2>
-                <p className="text-[10px] uppercase opacity-50 font-mono mt-1">Command your troops directly</p>
+                <h2 className="text-lg font-bold uppercase">Manual Play</h2>
+                <p className="text-[10px] uppercase opacity-50 font-mono mt-1">Command both armies yourself</p>
+              </div>
+            </button>
+
+            <button 
+              onClick={() => { setAiSetupMode('versus'); setShowAiConfig(true); }}
+              className="p-6 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex flex-col items-center gap-4 group"
+            >
+              <Swords size={44} className="group-hover:scale-110 transition-transform" />
+              <div className="text-center">
+                <h2 className="text-lg font-bold uppercase">Human vs AI</h2>
+                <p className="text-[10px] uppercase opacity-50 font-mono mt-1">You command Player 1 against an AI General</p>
               </div>
             </button>
             
             <button 
-              onClick={() => setShowAiConfig(true)}
-              className="p-8 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex flex-col items-center gap-4 group"
+              onClick={() => { setAiSetupMode('ai'); setShowAiConfig(true); }}
+              className="p-6 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex flex-col items-center gap-4 group"
             >
-              <Terminal size={48} className="group-hover:scale-110 transition-transform" />
+              <Terminal size={44} className="group-hover:scale-110 transition-transform" />
               <div className="text-center">
-                <h2 className="text-xl font-bold uppercase">AI Gameplay</h2>
+                <h2 className="text-lg font-bold uppercase">AI Gameplay</h2>
                 <p className="text-[10px] uppercase opacity-50 font-mono mt-1">Watch AI Generals battle</p>
               </div>
             </button>
@@ -1784,8 +1831,9 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
             onClose={() => setShowAiConfig(false)}
             aiConfigs={gameState.aiConfigs}
             nations={nationsFor(p1Nation)}
+            players={aiSetupMode === 'versus' ? [VERSUS_AI_PLAYER] : [1, 2]}
             onSave={(configs) => {
-              startGame('ai', configs);
+              startGame(aiSetupMode, configs);
               setShowAiConfig(false);
             }}
           />
@@ -1886,7 +1934,12 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
             )}>
               Player {gameState.currentPlayer}
             </p>
-            {gameState.gameMode === 'ai' && (() => {
+            {gameState.gameMode === 'versus' && humanTurn && (
+              <p className="text-[9px] uppercase font-mono tracking-wider opacity-60 flex items-center justify-end gap-1 whitespace-nowrap">
+                <Users size={10} /> Your command
+              </p>
+            )}
+            {!humanTurn && (() => {
               const ai = resolveAiModel(gameState.aiConfigs[gameState.currentPlayer]);
               const model = AI_MODELS[ai.provider].find(m => m.id === ai.model)?.label.replace(/ \(.*\)$/, '') ?? ai.model;
               return (
@@ -1896,7 +1949,16 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
               );
             })()}
           </div>
-          {gameState.gameMode === 'ai' && (
+          {aiStalled && !humanTurn && !gameState.winner && (
+            <button
+              onClick={retryAiTurn}
+              className="px-3 py-2 border border-red-700 text-red-700 text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 hover:bg-red-700 hover:text-white transition-colors"
+              title="The AI general's turn failed (see the battlefield log). Run it again from where it stopped."
+            >
+              <RotateCcw size={14} /> Retry AI turn
+            </button>
+          )}
+          {(gameState.gameMode === 'ai' || gameState.gameMode === 'versus') && (
             <button
               onClick={() => setAiPaused(p => !p)}
               className={cn(
@@ -2092,7 +2154,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
                             <div className="grid grid-cols-2 gap-1">
                               <button 
                                 onClick={() => handleRotate('ccw')}
-                                disabled={selectedUnit.mp < 1 || selectedUnit.owner !== gameState.currentPlayer}
+                                disabled={selectedUnit.mp < 1 || !commandable(selectedUnit)}
                                 className="py-3 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30 transition-all flex items-center justify-center"
                                 title="Rotate CCW (1 MP)"
                               >
@@ -2100,7 +2162,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
                               </button>
                               <button 
                                 onClick={() => handleRotate('cw')}
-                                disabled={selectedUnit.mp < 1 || selectedUnit.owner !== gameState.currentPlayer}
+                                disabled={selectedUnit.mp < 1 || !commandable(selectedUnit)}
                                 className="py-3 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30 transition-all flex items-center justify-center"
                                 title="Rotate CW (1 MP)"
                               >
@@ -2109,7 +2171,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
                             </div>
                             <button 
                               onClick={handleEntrench}
-                              disabled={selectedUnit.mp < 1 || selectedUnit.owner !== gameState.currentPlayer}
+                              disabled={selectedUnit.mp < 1 || !commandable(selectedUnit)}
                               className={cn(
                                 "py-3 border border-[#141414] uppercase text-[10px] font-bold tracking-widest disabled:opacity-30 transition-all flex items-center justify-center gap-2",
                                 selectedUnit.isEntrenched ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414] hover:text-[#E4E3E0]"
@@ -2122,7 +2184,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
                           {selectedUnit.type === 'line_infantry' && (
                             <button 
                               onClick={handleToggleBox}
-                              disabled={selectedUnit.mp < 1 || selectedUnit.owner !== gameState.currentPlayer}
+                              disabled={selectedUnit.mp < 1 || !commandable(selectedUnit)}
                               className={cn(
                                 "w-full py-3 border border-[#141414] uppercase text-[10px] font-bold tracking-widest transition-all flex items-center justify-center gap-2",
                                 selectedUnit.isBoxFormation ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414] hover:text-[#E4E3E0]"
@@ -2135,7 +2197,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
                           {selectedUnit.type === 'cannon' && (
                             <button 
                               onClick={handleTogglePalisade}
-                              disabled={selectedUnit.mp < 1 || selectedUnit.owner !== gameState.currentPlayer}
+                              disabled={selectedUnit.mp < 1 || !commandable(selectedUnit)}
                               className={cn(
                                 "w-full py-3 border border-[#141414] uppercase text-[10px] font-bold tracking-widest transition-all flex items-center justify-center gap-2",
                                 selectedUnit.isPalisaded ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414] hover:text-[#E4E3E0]"
@@ -2161,7 +2223,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
                       <button
                         key={type}
                         onClick={() => handleReinforce(type)}
-                        disabled={gameState.supply[gameState.currentPlayer] < UNIT_COSTS[type]}
+                        disabled={!humanTurn || gameState.supply[gameState.currentPlayer] < UNIT_COSTS[type]}
                         className="p-2 border border-[#141414] text-[10px] uppercase font-bold flex justify-between items-center hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30 transition-all"
                       >
                         <span>{type.replace('_', ' ')}</span>
@@ -2211,7 +2273,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
               <BattlefieldView
                 gameState={gameState}
                 mapRotation={mapRotation}
-                aiMode={gameState.gameMode === 'ai'}
+                aiMode={!humanTurn}
                 onTileClick={handleTileClick3D}
                 onTileHover={setHoveredTile}
               />
@@ -2237,8 +2299,8 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
                 const dy = selectedUnit ? Math.abs(selectedUnit.y - y) : 0;
                 const dist = Math.max(dx, dy);
                 
-                const canMoveTo = selectedUnit && selectedUnit.owner === gameState.currentPlayer && !unit && (dist === 1) && selectedUnit.mp >= getTerrainMpCost(tile.terrain) && zocStatus.canPass;
-                const canAttack = selectedUnit && selectedUnit.owner === gameState.currentPlayer && unit && unit.owner !== gameState.currentPlayer && dist <= selectedUnit.range && !selectedUnit.hasAttacked && isTargetInFiringLine(selectedUnit, x, y);
+                const canMoveTo = commandable(selectedUnit) && !unit && (dist === 1) && selectedUnit.mp >= getTerrainMpCost(tile.terrain) && zocStatus.canPass;
+                const canAttack = commandable(selectedUnit) && unit && unit.owner !== gameState.currentPlayer && dist <= selectedUnit.range && !selectedUnit.hasAttacked && isTargetInFiringLine(selectedUnit, x, y);
 
                 const isDangerous = zocStatus.takesDamage;
 
@@ -2384,9 +2446,12 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
         onClose={() => setShowAiConfig(false)}
         aiConfigs={gameState.aiConfigs}
         nations={gameState.nations}
+        players={gameState.gameMode === 'versus' ? [VERSUS_AI_PLAYER] : [1, 2]}
         onSave={(configs) => {
           setGameState(prev => ({ ...prev, aiConfigs: configs }));
           setShowAiConfig(false);
+          // A turn that failed (for instance for want of a key) goes again with the new settings.
+          if (aiStalled) retryAiTurn();
         }}
       />
 
@@ -2562,13 +2627,19 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
                   </div>
                   <button 
                     onClick={() => {
+                      if (!humanTurn) return;
                       endTurn();
                       setCommandInput('');
                       setCommandError(null);
                     }}
-                    className="w-full py-6 bg-[#141414] text-[#E4E3E0] uppercase font-bold tracking-[0.2em] hover:bg-[#2a2a2a] transition-all flex items-center justify-center gap-3 group"
+                    disabled={!humanTurn}
+                    className="w-full py-6 bg-[#141414] text-[#E4E3E0] uppercase font-bold tracking-[0.2em] hover:bg-[#2a2a2a] disabled:opacity-40 disabled:hover:bg-[#141414] transition-all flex items-center justify-center gap-3 group"
                   >
-                    End Turn <ChevronRight size={20} className="group-hover:translate-x-1 transition-transform" />
+                    {humanTurn ? (
+                      <>End Turn <ChevronRight size={20} className="group-hover:translate-x-1 transition-transform" /></>
+                    ) : (
+                      <><Cpu size={18} /> AI's Turn</>
+                    )}
                   </button>
                 </section>
               </div>
