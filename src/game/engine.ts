@@ -1,4 +1,4 @@
-import { Regiment, UnitType, Tile, GameState, Facing, Nation, SideTally, TurnSnapshot } from './types';
+import { Regiment, UnitType, Tile, GameState, Facing, Nation, SideTally, TurnSnapshot, ArmyDoctrine } from './types';
 import { DEFAULT_MODELS, DEFAULT_THINKING_LEVEL } from '../ai/models';
 
 const MAP_SIZE = 20;
@@ -98,6 +98,75 @@ export const COMMANDERS: Record<Nation, string[]> = {
     'Marshal Murat', 'Marshal Lannes', 'Marshal Masséna', 'Marshal Grouchy',
   ],
 };
+
+/**
+ * The starting armies. Each costs about the same at reinforcement prices (5,040 to 5,160
+ * supply), so none is simply stronger. Deployments are Player 1's (the south); Player 2's
+ * mirror them. Combined arms is the original army, deployed exactly as before.
+ */
+export const DOCTRINES: Record<ArmyDoctrine, { name: string; blurb: string; deploy: [UnitType, number, number][] }> = {
+  balanced: {
+    name: 'Combined arms',
+    blurb: 'A solid line with skirmishers, guns and horse in support',
+    deploy: [
+      ['line_infantry', 5, 17], ['line_infantry', 7, 17], ['line_infantry', 9, 17], ['line_infantry', 11, 17], ['line_infantry', 13, 17], ['line_infantry', 15, 17],
+      ['light_infantry', 4, 16], ['light_infantry', 16, 16],
+      ['cannon', 8, 18], ['cannon', 12, 18],
+      ['hussars', 2, 17], ['hussars', 18, 17],
+      ['chasseurs', 10, 18],
+    ],
+  },
+  cavalry: {
+    name: 'Cavalry corps',
+    blurb: 'Six regiments of horse for swift flanking; a thin line and one gun',
+    deploy: [
+      ['line_infantry', 7, 17], ['line_infantry', 9, 17], ['line_infantry', 11, 17], ['line_infantry', 13, 17],
+      ['light_infantry', 10, 16],
+      ['cannon', 10, 18],
+      ['hussars', 2, 17], ['hussars', 4, 17], ['hussars', 16, 17], ['hussars', 18, 17],
+      ['chasseurs', 3, 18], ['chasseurs', 17, 18],
+    ],
+  },
+  light: {
+    name: 'Light division',
+    blurb: 'A screen of five skirmisher battalions and mounted rifles ahead of the line',
+    deploy: [
+      ['line_infantry', 7, 17], ['line_infantry', 9, 17], ['line_infantry', 11, 17], ['line_infantry', 13, 17],
+      ['light_infantry', 2, 16], ['light_infantry', 6, 16], ['light_infantry', 10, 16], ['light_infantry', 14, 16], ['light_infantry', 18, 16],
+      ['cannon', 8, 18],
+      ['hussars', 12, 18],
+      ['chasseurs', 3, 17], ['chasseurs', 17, 17],
+    ],
+  },
+  artillery: {
+    name: 'Grand battery',
+    blurb: 'Four guns behind a strong line, for a battle of attrition',
+    deploy: [
+      ['line_infantry', 6, 17], ['line_infantry', 8, 17], ['line_infantry', 10, 17], ['line_infantry', 12, 17], ['line_infantry', 14, 17],
+      ['light_infantry', 3, 16], ['light_infantry', 17, 16],
+      ['cannon', 6, 18], ['cannon', 8, 18], ['cannon', 12, 18], ['cannon', 14, 18],
+      ['hussars', 2, 17],
+    ],
+  },
+};
+
+export const isDoctrine = (v: unknown): v is ArmyDoctrine => typeof v === 'string' && Object.prototype.hasOwnProperty.call(DOCTRINES, v);
+
+export const doctrineOf = (state: Pick<GameState, 'doctrines'>, player: number): ArmyDoctrine => state.doctrines?.[player] ?? 'balanced';
+
+/** "6 line · 2 light · 2 guns · 2 hussars · 1 chasseurs" for a doctrine's starting army. */
+export const doctrineSummary = (doctrine: ArmyDoctrine) => {
+  const count = (t: UnitType) => DOCTRINES[doctrine].deploy.filter(([u]) => u === t).length;
+  const parts: [UnitType, string, string][] = [
+    ['line_infantry', 'line', 'line'], ['light_infantry', 'light', 'light'], ['cannon', 'gun', 'guns'],
+    ['hussars', 'hussar', 'hussars'], ['chasseurs', 'chasseur', 'chasseurs'],
+  ];
+  return parts.filter(([t]) => count(t)).map(([t, one, many]) => `${count(t)} ${count(t) === 1 ? one : many}`).join(' · ');
+};
+
+/** The men a doctrine's army starts with. */
+export const doctrineMen = (doctrine: ArmyDoctrine) =>
+  DOCTRINES[doctrine].deploy.reduce((sum, [type]) => sum + createInitialRegiment('', type, 1, 0, 0, 0).men, 0);
 
 /** Waterloo's two commanders, until a player chooses others. */
 export const DEFAULT_COMMANDERS: Record<Nation, string> = { british: 'General Wellington', french: 'Emperor Napoléon' };
@@ -349,7 +418,11 @@ export const getTerrainMpCost = (terrain: Tile['terrain']): number => {
   }
 };
 
-export const getInitialState = (nations: { [player: number]: Nation } = DEFAULT_NATIONS, seed: string = randomSeed()): GameState => {
+export const getInitialState = (
+  nations: { [player: number]: Nation } = DEFAULT_NATIONS,
+  seed: string = randomSeed(),
+  doctrines: { [player: number]: ArmyDoctrine } = { 1: 'balanced', 2: 'balanced' },
+): GameState => {
   const rand = seededRandom(seed);
   const map = generateMap(rand);
   const reg = (id: string, type: UnitType, owner: number, x: number, y: number, index: number) =>
@@ -361,37 +434,17 @@ export const getInitialState = (nations: { [player: number]: Nation } = DEFAULT_
   // Player 2 (Top)
   map[0][10] = { x: 10, y: 0, terrain: 'command_center', owner: 2 };
 
-  const regiments: Regiment[] = [
-    // Player 2 (Top) - 6 Line, 2 Light, 2 Cannon, 2 Hussar, 1 Chasseur
-    reg('p2-l1', 'line_infantry', 2, 5, 2, 0),
-    reg('p2-l2', 'line_infantry', 2, 7, 2, 1),
-    reg('p2-l3', 'line_infantry', 2, 9, 2, 2),
-    reg('p2-l4', 'line_infantry', 2, 11, 2, 3),
-    reg('p2-l5', 'line_infantry', 2, 13, 2, 4),
-    reg('p2-l6', 'line_infantry', 2, 15, 2, 5),
-    reg('p2-li1', 'light_infantry', 2, 4, 3, 0),
-    reg('p2-li2', 'light_infantry', 2, 16, 3, 1),
-    reg('p2-c1', 'cannon', 2, 8, 1, 0),
-    reg('p2-c2', 'cannon', 2, 12, 1, 1),
-    reg('p2-h1', 'hussars', 2, 2, 2, 0),
-    reg('p2-h2', 'hussars', 2, 18, 2, 1),
-    reg('p2-ch1', 'chasseurs', 2, 10, 1, 0), // Moved slightly to avoid CC
-
-    // Player 1 (Bottom) - 6 Line, 2 Light, 2 Cannon, 2 Hussar, 1 Chasseur
-    reg('p1-l1', 'line_infantry', 1, 5, 17, 0),
-    reg('p1-l2', 'line_infantry', 1, 7, 17, 1),
-    reg('p1-l3', 'line_infantry', 1, 9, 17, 2),
-    reg('p1-l4', 'line_infantry', 1, 11, 17, 3),
-    reg('p1-l5', 'line_infantry', 1, 13, 17, 4),
-    reg('p1-l6', 'line_infantry', 1, 15, 17, 5),
-    reg('p1-li1', 'light_infantry', 1, 4, 16, 0),
-    reg('p1-li2', 'light_infantry', 1, 16, 16, 1),
-    reg('p1-c1', 'cannon', 1, 8, 18, 0),
-    reg('p1-c2', 'cannon', 1, 12, 18, 1),
-    reg('p1-h1', 'hussars', 1, 2, 17, 0),
-    reg('p1-h2', 'hussars', 1, 18, 17, 1),
-    reg('p1-ch1', 'chasseurs', 1, 10, 18, 0), // Moved slightly to avoid CC
-  ];
+  // Each army from its doctrine: Player 2 (north) mirrors Player 1's deployment. Player 2 is
+  // listed first, as it always was, so a map code still gives the same colours.
+  const army = (owner: number): Regiment[] => {
+    const counts: Partial<Record<UnitType, number>> = {};
+    return DOCTRINES[doctrines[owner] ?? 'balanced'].deploy.map(([type, x, y]) => {
+      const index = counts[type] ?? 0;
+      counts[type] = index + 1;
+      return reg(`p${owner}-${ID_PREFIX[type]}${index + 1}`, type, owner, x, owner === 1 ? y : 19 - y, index);
+    });
+  };
+  const regiments: Regiment[] = [...army(2), ...army(1)];
   // The colours come from the map code too, so a rematch looks the same.
   for (const r of regiments) r.standardColor = generateStandardColor(rand);
 
@@ -415,6 +468,7 @@ export const getInitialState = (nations: { [player: number]: Nation } = DEFAULT_
     },
     monologueHistory: [],
     nations: { ...nations },
+    doctrines: { ...doctrines },
     seed,
     startedAt: Date.now(),
     battleId: `${seed}-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`,

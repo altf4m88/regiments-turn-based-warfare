@@ -1,6 +1,6 @@
 import { describeModel, resolveAiModel } from '../ai/models';
-import { RULES_VERSION, commanderOf, isAiPlayer, nationOf, sideStats, victoryReason, VictoryReason } from './engine';
-import { AiProvider, GameMode, GameState, Nation, ThinkingLevelSetting } from './types';
+import { DOCTRINES, RULES_VERSION, commanderOf, doctrineOf, isAiPlayer, isDoctrine, nationOf, sideStats, victoryReason, VictoryReason } from './engine';
+import { AiProvider, ArmyDoctrine, GameMode, GameState, Nation, ThinkingLevelSetting } from './types';
 
 /** Who commanded a side: a person, or an AI general with its provider, model and thinking level. */
 export interface GeneralInfo {
@@ -19,6 +19,8 @@ export interface SideRecord {
   who: GeneralInfo;
   /** The commander's name in that battle, e.g. "Marshal Ney". */
   commander?: string;
+  /** The army it fielded; missing from records made before armies could be chosen (combined arms). */
+  doctrine?: ArmyDoctrine;
   men: number;
   regiments: number;
   lostMen: number;
@@ -75,7 +77,7 @@ export const recordBattle = (state: GameState): BattleRecord | null => {
     const s = sideStats(state, p);
     const who = generalInfo(state, p);
     return {
-      nation: nationOf(state, p), general: who.label, who, commander: commanderOf(state, p),
+      nation: nationOf(state, p), general: who.label, who, commander: commanderOf(state, p), doctrine: doctrineOf(state, p),
       men: s.men, regiments: s.regiments, lostMen: s.lostMen, lostRegiments: s.lostRegiments,
       raised: s.raised, attacks: s.attacks, charges: s.charges, supplyEarned: s.supplyEarned,
       capturePointTurns: s.capturePointTurns, ordersRejected: s.ordersRejected,
@@ -128,6 +130,7 @@ export const normalizeRecord = (raw: unknown): BattleRecord | null => {
         : { kind: 'ai', label, provider: /claude/i.test(label) ? 'claude' : /gemini/i.test(label) ? 'gemini' : undefined };
     return {
       nation: s.nation, general: label, who, commander: str(s.commander, 40) || undefined,
+      doctrine: isDoctrine(s.doctrine) ? s.doctrine : undefined,
       men: num(s.men), regiments: num(s.regiments), lostMen: num(s.lostMen), lostRegiments: num(s.lostRegiments),
       raised: num(s.raised), attacks: num(s.attacks), charges: num(s.charges), supplyEarned: num(s.supplyEarned),
       capturePointTurns: num(s.capturePointTurns), ordersRejected: num(s.ordersRejected),
@@ -149,6 +152,10 @@ export const normalizeRecord = (raw: unknown): BattleRecord | null => {
     sides: { 1: s1, 2: s2 },
   };
 };
+
+/** The army a side fielded, named only when either side chose something other than combined arms. */
+export const armyOf = (b: BattleRecord, player: number) =>
+  [1, 2].some(p => (b.sides[p].doctrine ?? 'balanced') !== 'balanced') ? DOCTRINES[b.sides[player].doctrine ?? 'balanced'].name : '';
 
 const byNewest = (a: BattleRecord, b: BattleRecord) => b.endedAt - a.endedAt;
 

@@ -1,9 +1,9 @@
 import { ReactNode } from 'react';
 import { Download, Eye, Repeat, RotateCcw, Shuffle, Trophy } from 'lucide-react';
-import { NATIONS, commanderOf, isAiPlayer, nationOf, sideStats, victoryReason, VictoryReason } from '../game/engine';
+import { DOCTRINES, NATIONS, commanderOf, doctrineOf, isAiPlayer, nationOf, sideStats, victoryReason, VictoryReason } from '../game/engine';
 import { resolveAiModel } from '../ai/models';
 import { ProviderIcon } from './ProviderIcon';
-import { BattleRecord, generalOf } from '../game/history';
+import { BattleRecord, armyOf, generalOf } from '../game/history';
 import { GameState, Nation, Regiment, Tile } from '../game/types';
 import { ARMY_COLOR, StrengthChart } from './StrengthChart';
 
@@ -108,7 +108,7 @@ export function BattleReport({ state, history, onRematch, onExport, onViewField,
   const winner = state.winner!;
   const reason = victoryReason(state);
   const sides = [1, 2].map(p => ({
-    player: p, nation: nationOf(state, p), general: generalOf(state, p), commander: commanderOf(state, p),
+    player: p, nation: nationOf(state, p), general: generalOf(state, p), commander: commanderOf(state, p), army: DOCTRINES[doctrineOf(state, p)].name,
     provider: isAiPlayer(state, p) ? resolveAiModel(state.aiConfigs[p]).provider : undefined, s: sideStats(state, p),
   }));
   const won = sides[winner - 1];
@@ -151,6 +151,7 @@ export function BattleReport({ state, history, onRematch, onExport, onViewField,
                       {sd.player === winner && <span className="ml-1 px-1.5 py-0.5 text-[9px] tracking-widest bg-[#141414] text-[#E4E3E0]">Victor</span>}
                     </span>
                     <span className="block font-serif italic text-base mt-0.5">{sd.commander}</span>
+                    <span className="block text-[10px] font-mono uppercase text-[#141414]/80 mt-0.5">{sd.army}</span>
                     <span className="flex items-center gap-1 text-[10px] font-mono uppercase text-[#141414]/60 mt-0.5">
                       <ProviderIcon provider={sd.provider} size={11} />
                       Player {sd.player} · {sd.player === 1 ? 'south' : 'north'} · {sd.general}
@@ -194,7 +195,7 @@ export function BattleReport({ state, history, onRematch, onExport, onViewField,
                       <td className="py-1.5 pr-2 whitespace-nowrap">{new Date(b.endedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
                       {[1, 2].map(p => (
                         <td key={p} className="py-1.5 pr-2">
-                          <span className="flex items-center gap-1.5 font-bold uppercase"><Key nation={b.sides[p].nation} />{NATIONS[b.sides[p].nation].adjective}</span>
+                          <span className="flex items-center gap-1.5 font-bold uppercase"><Key nation={b.sides[p].nation} />{NATIONS[b.sides[p].nation].adjective}{armyOf(b, p) && <span className="font-normal text-[#141414]/60">· {armyOf(b, p)}</span>}</span>
                           <span className="block text-[#141414]/60">{b.sides[p].commander ? `${b.sides[p].commander} · ` : ''}{b.sides[p].general} · lost {fmt(b.sides[p].lostMen)} men</span>
                         </td>
                       ))}

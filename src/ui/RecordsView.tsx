@@ -1,7 +1,7 @@
 import { ChangeEvent, useMemo, useRef, useState } from 'react';
 import { Download, Map as MapIcon, Trash2, Upload, X } from 'lucide-react';
 import { NATIONS, RULES_VERSION } from '../game/engine';
-import { BattleRecord, GeneralInfo, exportBattles, importBattles, storeBattles } from '../game/history';
+import { BattleRecord, GeneralInfo, armyOf, exportBattles, importBattles, storeBattles } from '../game/history';
 import { buildLeaderboard } from '../game/leaderboard';
 import { GameMode } from '../game/types';
 import { ARMY_COLOR } from './StrengthChart';
@@ -254,6 +254,7 @@ export function RecordsView({ records, onChange, onClose, onPlayMap }: {
                         <svg width="12" height="4" aria-hidden className="shrink-0"><line x1="1" y1="2" x2="11" y2="2" stroke={ARMY_COLOR[b.sides[p].nation]} strokeWidth="2.5" strokeLinecap="round" /></svg>
                         <span className="min-w-0">
                           <span className="font-bold uppercase">P{p} {NATIONS[b.sides[p].nation].adjective}</span>{' '}
+                          {armyOf(b, p) && <span className="uppercase text-[#141414]/60">{armyOf(b, p)} </span>}
                           <span className="text-[#141414]/80">{b.sides[p].commander ? `${b.sides[p].commander} · ` : ''}{b.sides[p].general}</span>
                           <span className="text-[#141414]/55"> · lost {fmt(b.sides[p].lostMen)}</span>
                           {b.winner === p && <span className="ml-1 px-1 text-[9px] bg-[#141414] text-[#E4E3E0] uppercase">won</span>}
@@ -290,6 +291,7 @@ export function RecordsView({ records, onChange, onClose, onPlayMap }: {
                             <svg width="12" height="4" aria-hidden className="shrink-0"><line x1="1" y1="2" x2="11" y2="2" stroke={ARMY_COLOR[b.sides[p].nation]} strokeWidth="2.5" strokeLinecap="round" /></svg>
                             <span className="uppercase font-bold">{NATIONS[b.sides[p].nation].adjective}</span>
                           </span>
+                          {armyOf(b, p) && <span className="block text-[9px] uppercase text-[#141414]/60">{armyOf(b, p)}</span>}
                           {b.sides[p].commander && <span className="block font-serif italic text-xs truncate max-w-[16rem]">{b.sides[p].commander}</span>}
                           <span className="flex items-center gap-1 text-[#141414]/80 truncate max-w-[16rem]"><ProviderIcon provider={b.sides[p].who.provider} size={10} />{b.sides[p].general}</span>
                           <span className="block text-[9px] text-[#141414]/55">lost {fmt(b.sides[p].lostMen)} men</span>

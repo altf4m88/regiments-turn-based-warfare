@@ -94,6 +94,9 @@ export interface MonologueEntry {
 
 export type GameMode = 'manual' | 'ai' | 'versus';
 
+/** A starting army: today's combined arms, or one built around cavalry, skirmishers or guns. */
+export type ArmyDoctrine = 'balanced' | 'cavalry' | 'light' | 'artillery';
+
 /** A side's running account of the battle; losses and strength are worked out from it and the field. */
 export interface SideTally {
   startRegiments: number;
@@ -153,6 +156,8 @@ export interface GameState {
   nations: { [player: number]: Nation };
   /** The name each player's general goes by, e.g. "General Wellington". */
   commanders?: { [player: number]: string };
+  /** Each player's starting army (combined arms unless chosen otherwise). */
+  doctrines?: { [player: number]: ArmyDoctrine };
   /** Highest number handed out per id prefix ("p1-l": 7), so reinforcement ids are never reused. */
   idCounters?: Record<string, number>;
 }

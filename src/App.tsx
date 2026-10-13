@@ -53,8 +53,8 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
 import { Client } from "langsmith";
-import { Regiment, Tile, GameState, GameMode, UnitType, Facing, GameAnimation, AiConfig, AiProvider, Nation, ThinkingLevelSetting } from './game/types';
-import { getInitialState, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath, resolveAttack, nextRegimentId, parseUnitType, NATIONS, nationOf, nationsFor, isAiPlayer, aiPlayerOf, humanPlayerOf, VERSUS_AI_PLAYER, idleRegiments, describeIdle, COMMANDERS, DEFAULT_COMMANDERS, normalizeCommander, commanderOf, bumpTally, snapshot, sideStats, victoryReason, randomSeed, normalizeSeed } from './game/engine';
+import { Regiment, Tile, GameState, GameMode, UnitType, Facing, GameAnimation, AiConfig, AiProvider, Nation, ThinkingLevelSetting, ArmyDoctrine } from './game/types';
+import { getInitialState, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath, resolveAttack, nextRegimentId, parseUnitType, NATIONS, nationOf, nationsFor, isAiPlayer, aiPlayerOf, humanPlayerOf, VERSUS_AI_PLAYER, idleRegiments, describeIdle, COMMANDERS, DEFAULT_COMMANDERS, normalizeCommander, commanderOf, DOCTRINES, doctrineOf, isDoctrine, bumpTally, snapshot, sideStats, victoryReason, randomSeed, normalizeSeed } from './game/engine';
 import { AI_MODELS, AI_PROVIDERS, THINKING_LEVELS, describeModel, modelName, resolveAiModel } from './ai/models';
 import { AiSession, startAiSession } from './ai/session';
 import { Markdown, plainText } from './ui/Markdown';
@@ -63,9 +63,11 @@ import { BattleRecord, generalOf, loadBattles, recordBattle, saveBattle } from '
 import { startsCompact, useCompact } from './ui/useCompact';
 import { RecordsView } from './ui/RecordsView';
 import { inCharacter, personaBriefing, whoIsWho } from './ai/persona';
+import { doctrineBriefing } from './ai/doctrine';
 import { TurnBanner } from './ui/TurnBanner';
 import { DispatchBubble } from './ui/DispatchBubble';
 import { CommanderPortrait } from './ui/CommanderPortrait';
+import { ArmyPicker } from './ui/ArmyPicker';
 import { ProviderIcon } from './ui/ProviderIcon';
 
 // The 3D battlefield (three.js) is code-split so the 2D view stays light.
@@ -297,6 +299,7 @@ const AiConfigModal = ({
   players = [1, 2],
   onAiPlayerChange,
   commanders,
+  armies,
 }: { 
   isOpen: boolean; 
   onClose: () => void; 
@@ -309,6 +312,7 @@ const AiConfigModal = ({
   onAiPlayerChange?: (aiPlayer: number) => void;
   /** Each player's commander, shown on their general's panel. */
   commanders?: { [player: number]: string };
+  armies?: { [player: number]: ArmyDoctrine };
 }) => {
   const versus = players.length === 1;
   const [localConfigs, setLocalConfigs] = useState(aiConfigs);
@@ -359,6 +363,7 @@ const AiConfigModal = ({
               <h3 className={cn("font-bold uppercase text-sm border-b border-[#141414] pb-2", SIDE_UI[nations[playerNum]].text)}>
                 Player {playerNum} · {NATIONS[nations[playerNum]].adjective}{versus && ' · AI general'}
                 {commanders?.[playerNum] && <span className="block mt-0.5 normal-case font-serif italic text-base text-[#141414]">{commanders[playerNum]}</span>}
+                {armies?.[playerNum] && <span className="block text-[10px] font-mono text-[#141414]/60">{DOCTRINES[armies[playerNum]].name}</span>}
               </h3>
               
               <div className="space-y-1">
@@ -622,6 +627,15 @@ export default function App() {
       return { ...DEFAULT_COMMANDERS };
     }
   });
+  // The army each nation fields, kept per army like the commanders (combined arms by default).
+  const [doctrineByNation, setDoctrineByNation] = useState<Record<Nation, ArmyDoctrine>>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('regiments.doctrines') ?? '{}');
+      return { british: isDoctrine(saved.british) ? saved.british : 'balanced', french: isDoctrine(saved.french) ? saved.french : 'balanced' };
+    } catch {
+      return { british: 'balanced', french: 'balanced' };
+    }
+  });
   const aiTurnRef = useRef<{ turn: number, player: number } | null>(null);
   // Bumped when a battle is abandoned, so an AI turn still in flight stops touching the game.
   const battleRef = useRef(0);
@@ -657,18 +671,25 @@ export default function App() {
 
   useEffect(() => {
     try {
+      localStorage.setItem('regiments.doctrines', JSON.stringify(doctrineByNation));
+    } catch {
+      /* storage unavailable */
+    }
+  }, [doctrineByNation]);
+
+  useEffect(() => {
+    try {
       localStorage.setItem('regiments.p1Nation', p1Nation);
     } catch {
       /* storage unavailable */
     }
   }, [p1Nation]);
 
-  /** Fresh battle with the chosen armies (the map is regenerated too). */
   /**
    * Fresh battle on the map code from the start screen (or the one given), with the chosen
    * armies. In Human vs AI the view starts from your side of the field.
    */
-  const startGame = (mode: GameMode, aiConfigs: { [key: number]: AiConfig }, opts: { seed?: string; nations?: { [player: number]: Nation }; aiPlayer?: number } = {}) => {
+  const startGame = (mode: GameMode, aiConfigs: { [key: number]: AiConfig }, opts: { seed?: string; nations?: { [player: number]: Nation }; aiPlayer?: number; doctrines?: { [player: number]: ArmyDoctrine } } = {}) => {
     battleRef.current++;
     aiTurnRef.current = null;
     setIsAiThinking(false);
@@ -680,13 +701,15 @@ export default function App() {
     const aiPlayer = mode === 'versus' ? opts.aiPlayer ?? versusAiPlayer : undefined;
     const nations = opts.nations ?? nationsFor(p1Nation);
     const commander = (p: number) => normalizeCommander(commanderNames[nations[p]]) || DEFAULT_COMMANDERS[nations[p]];
+    const doctrines = opts.doctrines ?? { 1: doctrineByNation[nations[1]], 2: doctrineByNation[nations[2]] };
     setMapRotation(aiPlayer === 1 ? 180 : 0);
-    setGameState({ ...getInitialState(nations, seed), gameMode: mode, aiConfigs, aiPlayer, commanders: { 1: commander(1), 2: commander(2) } });
+    setGameState({ ...getInitialState(nations, seed, doctrines), gameMode: mode, aiConfigs, aiPlayer, commanders: { 1: commander(1), 2: commander(2) } });
   };
 
   /**
    * The same map again. Swapping sides gives each general the other army's starting
-   * position and turn order; each keeps its own army (and, against an AI, you keep yours).
+   * position and turn order; each keeps its own army and its composition (and, against an
+   * AI, you keep yours).
    */
   const rematch = (swapSides: boolean) => {
     const s = gameState;
@@ -698,7 +721,7 @@ export default function App() {
     const aiPlayer = s.gameMode === 'versus' ? (swapSides ? humanPlayerOf(s) : aiPlayerOf(s)) : undefined;
     setP1Nation(nations[1]);
     if (aiPlayer) setVersusAiPlayer(aiPlayer);
-    startGame(s.gameMode, flip<AiConfig>(s.aiConfigs), { seed: s.seed, nations, aiPlayer });
+    startGame(s.gameMode, flip<AiConfig>(s.aiConfigs), { seed: s.seed, nations, aiPlayer, doctrines: flip<ArmyDoctrine>({ 1: doctrineOf(s, 1), 2: doctrineOf(s, 2) }) });
   };
 
   useEffect(() => {
@@ -716,7 +739,10 @@ export default function App() {
 
   const getGameStateString = useCallback((state: GameState = gameState) => {
     let stateStr = `--- BATTLEFIELD STATUS (Turn ${state.turn}) ---\n`;
-    stateStr += `Armies: Player 1 = ${NATIONS[nationOf(state, 1)].adjective}, Player 2 = ${NATIONS[nationOf(state, 2)].adjective}\n`;
+    // Army compositions are named only when a side fields a special one, so standard games read as before.
+    const special = doctrineOf(state, 1) !== 'balanced' || doctrineOf(state, 2) !== 'balanced';
+    const army = (p: number) => NATIONS[nationOf(state, p)].adjective + (special ? ` (${DOCTRINES[doctrineOf(state, p)].name})` : '');
+    stateStr += `Armies: Player 1 = ${army(1)}, Player 2 = ${army(2)}\n`;
     stateStr += `Current Player: Player ${state.currentPlayer}\n`;
     stateStr += `Supply: P1: ${state.supply[1]}, P2: ${state.supply[2]}\n`;
     stateStr += `Reinforcement costs: ${Object.entries(UNIT_COSTS).map(([t, c]) => `${t} ${c}`).join(', ')}\n`;
@@ -1703,7 +1729,8 @@ export default function App() {
         thinkingLevel,
         systemInstruction: aiInstructions
           + (gameState.gameMode === 'versus' ? VERSUS_BRIEFING : '')
-          + (inCharacter(gameState, gameState.currentPlayer) ? personaBriefing(gameState, gameState.currentPlayer) : ''),
+          + (inCharacter(gameState, gameState.currentPlayer) ? personaBriefing(gameState, gameState.currentPlayer) : '')
+          + doctrineBriefing(gameState, gameState.currentPlayer),
         useVertexAI: config.useVertexAI,
       });
       session = chat;
@@ -1981,7 +2008,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
       turns: s.turn,
       winner: s.winner,
       victory: victoryReason(s),
-      sides: [1, 2].map(p => ({ player: p, nation: nationOf(s, p), general: generalOf(s, p), ...sideStats(s, p) })),
+      sides: [1, 2].map(p => ({ player: p, nation: nationOf(s, p), army: DOCTRINES[doctrineOf(s, p)].name, general: generalOf(s, p), ...sideStats(s, p) })),
       timeline: s.timeline,
       dispatches: s.monologueHistory,
       battlefieldLog: s.battlefieldLogs,
@@ -2043,7 +2070,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
           </div>
 
           <div className="space-y-2">
-            <p className="text-[10px] uppercase tracking-widest font-mono opacity-50 text-center">Commanders</p>
+            <p className="text-[10px] uppercase tracking-widest font-mono opacity-50 text-center">Commanders &amp; armies</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {nationsOrder(p1Nation).map(n => {
                 const player = n === p1Nation ? 1 : 2;
@@ -2052,40 +2079,46 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
                   setCommanderNames(c => ({ ...c, [n]: others[Math.floor(Math.random() * others.length)] }));
                 };
                 return (
-                  <div key={n} className="flex items-center gap-2 border border-[#141414]/15 pl-2 pr-1 py-1.5">
-                    <CommanderPortrait name={normalizeCommander(commanderNames[n]) || DEFAULT_COMMANDERS[n]} nation={n} size={32} />
-                    <span className="text-[9px] font-mono uppercase opacity-60 shrink-0">P{player}</span>
-                    <input
-                      list={`commanders-${n}`}
-                      value={commanderNames[n]}
-                      onChange={e => setCommanderNames(c => ({ ...c, [n]: e.target.value.slice(0, 40) }))}
-                      onBlur={() => setCommanderNames(c => ({ ...c, [n]: normalizeCommander(c[n]) || DEFAULT_COMMANDERS[n] }))}
-                      placeholder={DEFAULT_COMMANDERS[n]}
-                      aria-label={`${NATIONS[n].adjective} commander`}
-                      className="flex-1 min-w-0 bg-transparent font-serif italic text-lg py-1 outline-none focus:underline"
-                    />
-                    <datalist id={`commanders-${n}`}>
-                      {COMMANDERS[n].map(c => <option key={c} value={c} />)}
-                    </datalist>
-                    <button
-                      onClick={roll}
-                      className="h-9 w-9 shrink-0 flex items-center justify-center hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
-                      title={`Another ${NATIONS[n].adjective} commander of the period`}
-                      aria-label={`Another ${NATIONS[n].adjective} commander`}
-                    >
-                      <Shuffle size={14} />
-                    </button>
+                  <div key={n} className="border border-[#141414]/15">
+                    <div className="flex items-center gap-2 pl-2 pr-1 py-1.5">
+                      <CommanderPortrait name={normalizeCommander(commanderNames[n]) || DEFAULT_COMMANDERS[n]} nation={n} size={32} />
+                      <span className="text-[9px] font-mono uppercase opacity-60 shrink-0">P{player}</span>
+                      <input
+                        list={`commanders-${n}`}
+                        value={commanderNames[n]}
+                        onChange={e => setCommanderNames(c => ({ ...c, [n]: e.target.value.slice(0, 40) }))}
+                        onBlur={() => setCommanderNames(c => ({ ...c, [n]: normalizeCommander(c[n]) || DEFAULT_COMMANDERS[n] }))}
+                        placeholder={DEFAULT_COMMANDERS[n]}
+                        aria-label={`${NATIONS[n].adjective} commander`}
+                        className="flex-1 min-w-0 bg-transparent font-serif italic text-lg py-1 outline-none focus:underline"
+                      />
+                      <datalist id={`commanders-${n}`}>
+                        {COMMANDERS[n].map(c => <option key={c} value={c} />)}
+                      </datalist>
+                      <button
+                        onClick={roll}
+                        className="h-9 w-9 shrink-0 flex items-center justify-center hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
+                        title={`Another ${NATIONS[n].adjective} commander of the period`}
+                        aria-label={`Another ${NATIONS[n].adjective} commander`}
+                      >
+                        <Shuffle size={14} />
+                      </button>
+                    </div>
+                    <ArmyPicker nation={n} player={player} value={doctrineByNation[n]} onChange={d => setDoctrineByNation(c => ({ ...c, [n]: d }))} />
                   </div>
                 );
               })}
             </div>
-            <p className="text-[10px] font-mono text-center opacity-50">Pick a marshal or general of the period, or type any name.</p>
+            <p className="text-[10px] font-mono text-center opacity-50">
+              Pick a marshal or general of the period, or type any name. The armies cost about the same; an AI general fights to its army's strengths.
+            </p>
           </div>
 
           <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-5 border border-[#141414]/15 p-4">
             {(() => {
               const code = normalizeSeed(seedInput);
-              const preview = code ? getInitialState(nationsFor(p1Nation), code) : null;
+              const nations = nationsFor(p1Nation);
+              const preview = code ? getInitialState(nations, code, { 1: doctrineByNation[nations[1]], 2: doctrineByNation[nations[2]] }) : null;
               return preview
                 ? <MapPreview map={preview.map} regiments={preview.regiments} nations={preview.nations} size={112} />
                 : <div className="w-[112px] h-[112px] shrink-0 border border-dashed border-[#141414]/30 flex items-center justify-center text-[9px] font-mono uppercase opacity-50 text-center p-2">Random map</div>;
@@ -2156,6 +2189,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
             aiConfigs={gameState.aiConfigs}
             nations={nationsFor(p1Nation)}
             commanders={{ 1: normalizeCommander(commanderNames[p1Nation]) || DEFAULT_COMMANDERS[p1Nation], 2: normalizeCommander(commanderNames[nationsFor(p1Nation)[2]]) || DEFAULT_COMMANDERS[nationsFor(p1Nation)[2]] }}
+            armies={{ 1: doctrineByNation[p1Nation], 2: doctrineByNation[nationsFor(p1Nation)[2]] }}
             players={aiSetupMode === 'versus' ? [versusAiPlayer] : [1, 2]}
             onAiPlayerChange={setVersusAiPlayer}
             onSave={(configs) => {

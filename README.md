@@ -11,6 +11,17 @@ On the start screen, choose the army Player 1 commands (British or French; Playe
 
 **Commanders.** Each army is led by a named general: General Wellington and Emperor Napoléon unless you choose otherwise. On the start screen, type any name for each army's commander, or roll another marshal or general of the period (Picton, Hill, Uxbridge… for the British; Ney, Davout, Soult, Murat… for the French). Names are kept in this browser and appear in the turn banner, the header, the AI's dispatches, the battle report and the records. When an AI general's turn begins, the banner shows the commander's bust and names its model with its provider's logo, e.g. *Marshal Ney is thinking with Claude Sonnet 5.5*. The sixteen historical commanders have portraits, cropped from public-domain paintings on Wikimedia Commons (Lawrence's Wellington, David's Napoléon, Gérard's Ney and Murat, and others; credits in `src/assets/portraits/README.md`); a name you type yourself is drawn as an officer's silhouette in the army's colours.
 
+**Armies.** Below each commander, choose the army they field. All four cost about the same at reinforcement prices (5,040 to 5,160 supply), so none is simply stronger; they play differently.
+
+| Army | Order of battle | Plays as |
+| :--- | :--- | :--- |
+| Combined arms | 6 line · 2 light · 2 guns · 2 hussars · 1 chasseur (13 regiments, 8,700 men) | The standard army, deployed as before |
+| Cavalry corps | 4 line · 1 light · 1 gun · 4 hussars · 2 chasseurs (12, 7,150) | Swift flanking: the horse rides round the flanks for guns, skirmishers and exposed lines |
+| Light division | 4 line · 5 light · 1 gun · 1 hussar · 2 chasseurs (13, 8,350) | A skirmishing battle from woods and villages, out of reach of line musketry |
+| Grand battery | 5 line · 2 light · 4 guns · 1 hussar (12, 7,200) | Attrition: guns break the enemy as it crosses the killing ground before an entrenched line |
+
+An AI general gets a short briefing on how to fight with its army, and a note on how to answer the enemy's. When both sides field combined arms nothing is added, so standard games keep the standard prompts and comparisons between models stay valid. The choice is kept per army in this browser, like the commander; a rematch keeps each side's army, and the report and the records name them.
+
 Each AI dispatch appears as a speech bubble from its general over the top right of the map, beside the HUD: three lines at first, **Read full dispatch** for the rest. **−** minimises it to a tab (remembered, with a dot when a new dispatch arrives) and **×** closes it until the next one. The last dispatch stays up during your turn so you can read it; every dispatch is kept in the HUD's *Strategic Archive*.
 
 AI generals play **in character**: each knows its own name and its opponent's, and writes its dispatches in the voice of its army, a French marshal with the odd *Mon Dieu !* or *En avant !*, a British general with a dry *Steady, lads!*. The persona only colours the dispatches; orders are the same commands. Each general has an *In character* switch in AI settings; turn it off to send the neutral prompts, for example when comparing models. The Claude and Gemini logos come from [Simple Icons](https://simpleicons.org) (see `src/assets/providers/`).
