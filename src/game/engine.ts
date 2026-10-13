@@ -73,15 +73,15 @@ const generateStandardColor = () => {
 };
 
 /**
- * Supply cost of a reinforcement. Set high enough that, on +50 base income, a side can
- * afford a new line regiment about every four turns rather than every other turn.
+ * Supply cost of a reinforcement: deliberately steep, so generals fight with the army they
+ * have. On +50 base income a side can afford a new line regiment about every six turns.
  */
 export const UNIT_COSTS: { [key in UnitType]: number } = {
-  line_infantry: 200,
-  light_infantry: 240,
-  cannon: 400,
-  hussars: 300,
-  chasseurs: 360,
+  line_infantry: 300,
+  light_infantry: 360,
+  cannon: 600,
+  hussars: 450,
+  chasseurs: 540,
 };
 
 export const SUPPLY_PER_TURN = 50;
@@ -504,14 +504,15 @@ export const getZoCStatus = (x: number, y: number, movingUnit: Regiment, regimen
   const top = enemyRegiments.find(r => r.x === x && r.y === y - 1);
   const bottom = enemyRegiments.find(r => r.x === x && r.y === y + 1);
 
-  const isGap = (left && right) || (top && bottom);
+  const pair = left && right ? [left, right] : top && bottom ? [top, bottom] : null;
 
-  if (!isGap) return { canPass: true, takesDamage: false };
+  if (!pair) return { canPass: true, takesDamage: false };
 
   const isCavalry = movingUnit.type === 'hussars' || movingUnit.type === 'chasseurs';
   
   if (isCavalry) {
-    return { canPass: true, takesDamage: true };
+    // The two regiments either side fire into the gap as the horsemen ride through.
+    return { canPass: true, takesDamage: true, shooters: pair.map(r => ({ x: r.x, y: r.y })) };
   } else {
     return { canPass: false, takesDamage: false };
   }
