@@ -76,6 +76,8 @@ export interface AiConfig {
   claudeApiKey?: string;
   claudeModel?: string;
   thinkingLevel?: ThinkingLevelSetting;
+  /** Play in character: know both commanders' names and write in the voice of its army. On unless false. */
+  inCharacter?: boolean;
   langsmithApiKey?: string;
   langsmithProject?: string;
   useVertexAI?: boolean;

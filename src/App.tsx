@@ -62,6 +62,7 @@ import { BattleReport, CasualtyPanel, MapPreview } from './ui/BattleReport';
 import { BattleRecord, generalOf, loadBattles, recordBattle, saveBattle } from './game/history';
 import { startsCompact, useCompact } from './ui/useCompact';
 import { RecordsView } from './ui/RecordsView';
+import { inCharacter, personaBriefing, whoIsWho } from './ai/persona';
 import { TurnBanner } from './ui/TurnBanner';
 import { ProviderIcon } from './ui/ProviderIcon';
 
@@ -454,6 +455,21 @@ const AiConfigModal = ({
                   ))}
                 </select>
               </div>
+
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={config.inCharacter !== false}
+                  onChange={e => update({ inCharacter: e.target.checked })}
+                  className="accent-[#141414] mt-0.5"
+                />
+                <span>
+                  <span className="block text-[10px] uppercase font-bold opacity-60">In character</span>
+                  <span className="block text-[9px] font-mono opacity-50 leading-snug">
+                    Knows both commanders by name and writes like a {nations[playerNum] === 'french' ? 'French marshal (mon Dieu !)' : 'British general (steady, lads!)'}. Turn off for neutral prompts when comparing models.
+                  </span>
+                </span>
+              </label>
 
               <div className="space-y-1 pt-2 border-t border-[#141414]/10">
                 <label className="text-[10px] uppercase font-bold opacity-60">LangSmith API Key (Optional)</label>
@@ -1685,7 +1701,9 @@ export default function App() {
         apiKey,
         model,
         thinkingLevel,
-        systemInstruction: aiInstructions + (gameState.gameMode === 'versus' ? VERSUS_BRIEFING : ''),
+        systemInstruction: aiInstructions
+          + (gameState.gameMode === 'versus' ? VERSUS_BRIEFING : '')
+          + (inCharacter(gameState, gameState.currentPlayer) ? personaBriefing(gameState, gameState.currentPlayer) : ''),
         useVertexAI: config.useVertexAI,
       });
       session = chat;
@@ -1730,7 +1748,7 @@ ${turnOutput ? `\nRESULTS OF YOUR COMMANDS SO FAR THIS TURN:\n${turnOutput}\n` :
 CURRENT GAME STATE:
 ${getGameStateString(currentGameState)}
 
-You are Player ${currentGameState.currentPlayer} (${NATIONS[nationOf(currentGameState, currentGameState.currentPlayer)].adjective}). Turn ${currentGameState.turn}, iteration ${iteration + 1} of 5.
+${inCharacter(currentGameState, currentGameState.currentPlayer) ? whoIsWho(currentGameState, currentGameState.currentPlayer) : `You are Player ${currentGameState.currentPlayer} (${NATIONS[nationOf(currentGameState, currentGameState.currentPlayer)].adjective}).`} Turn ${currentGameState.turn}, iteration ${iteration + 1} of 5.
 Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE code block with your commands.
 - The commands run in order, and you will see their results in the next iteration.
 - Every regiment's MP refills each turn, and MP you leave unused is lost.
