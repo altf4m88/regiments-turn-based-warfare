@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GameState, Regiment } from '../../game/types';
-import { getTerrainMpCost, getZoCStatus, isTargetInFiringLine } from '../../game/engine';
+import { getTerrainMpCost, getZoCStatus, isAiPlayer, isTargetInFiringLine } from '../../game/engine';
 import { MAP_N } from '../core/constants';
 
 export interface Reach {
@@ -100,7 +100,7 @@ export const paintOverlay = (
     data[i + 3] = Math.round(a * 255);
   };
 
-  const mine = sel.owner === state.currentPlayer && !state.winner;
+  const mine = sel.owner === state.currentPlayer && !state.winner && !isAiPlayer(state, state.currentPlayer);
   const occupiedBy = new Map(state.regiments.map(r => [key(r.x, r.y), r]));
 
   // Firing arc (shown for any selected unit so you can read enemy threats too).
@@ -116,7 +116,7 @@ export const paintOverlay = (
 
   let reach: Reach | null = null;
   let cache = reachCache;
-  if (mine && sel.mp > 0 && !sel.isBoxFormation && !sel.isPalisaded) {
+  if (mine && sel.mp > 0 && !sel.isBoxFormation && !sel.isPalisaded && !sel.isEntrenched) {
     const sig = `${sel.x},${sel.y},${sel.mp},${state.regiments.map(r => `${r.id}${r.x}.${r.y}`).join('|')}`;
     if (cache && cache.id === sel.id && cache.sig === sig) reach = cache.reach;
     else {

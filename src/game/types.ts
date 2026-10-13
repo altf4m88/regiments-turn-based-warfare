@@ -33,7 +33,7 @@ export interface Tile {
   owner?: number; // For command_center, supply_node, and capture_point
 }
 
-export type AnimationType = 'attack' | 'move' | 'entrench' | 'box_formation' | 'palisade' | 'damage';
+export type AnimationType = 'attack' | 'move' | 'entrench' | 'box_formation' | 'palisade' | 'damage' | 'gauntlet';
 
 export interface GameAnimation {
   id: string;
@@ -44,6 +44,13 @@ export interface GameAnimation {
   toY?: number;
   unitType?: UnitType;
   damage?: number;
+  /**
+   * 'gauntlet': cavalry riding from (fromX, fromY) through the gap at (toX, toY) in an enemy
+   * line; these are the two line regiments either side of the gap that fire into it.
+   */
+  shooters?: { x: number; y: number }[];
+  /** 'attack': line infantry closing with the bayonet instead of firing. */
+  bayonet?: boolean;
   timestamp: number;
 }
 
@@ -81,6 +88,8 @@ export interface MonologueEntry {
   timestamp: number;
 }
 
+export type GameMode = 'manual' | 'ai' | 'versus';
+
 export interface GameState {
   map: Tile[][];
   regiments: Regiment[];
@@ -94,8 +103,14 @@ export interface GameState {
   capturePointTurns: number;
   battlefieldLogs: string[];
   cliHistory: string[];
-  gameMode: 'manual' | 'ai' | null;
+  /**
+   * 'manual': people command both armies. 'ai': an LLM general commands each army.
+   * 'versus': a person commands Player 1 against an LLM general commanding Player 2.
+   */
+  gameMode: GameMode | null;
   aiConfigs: { [key: number]: AiConfig };
   monologueHistory: MonologueEntry[];
   nations: { [player: number]: Nation };
+  /** Highest number handed out per id prefix ("p1-l": 7), so reinforcement ids are never reused. */
+  idCounters?: Record<string, number>;
 }

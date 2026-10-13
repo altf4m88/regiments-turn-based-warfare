@@ -418,8 +418,19 @@ export class BattleAudio {
     this.burst(dest, at, 0.035, 'highpass', 4500, 0.7, 0.6 * power, 0.0005);
   }
 
-  /** Cavalry at close quarters: sabres whistling and clashing, horses milling, a scuffle. */
-  melee(pos: THREE.Vector3, duration: number, delay = 0) {
+  /** A bayonet charge: running feet and a swelling cheer, then the clash of steel without horses. */
+  bayonetCharge(pos: THREE.Vector3, target: THREE.Vector3, run: number) {
+    if (!this.ready) return;
+    const t0 = this.ctx!.currentTime;
+    const bus = this.bus(pos, 1.0, run + 3);
+    this.footsteps(bus, t0 + 0.3, run, 0.24, 4, 0.08, 0.3);
+    this.sweep(bus, t0 + 0.2, run + 0.4, 260, 720, 0.9, 0.35); // the cheer
+    this.burst(bus, t0 + 0.2, run + 0.6, 'bandpass', 480, 0.6, 0.22, 0.25);
+    this.melee(target, 1.1, run + 0.3, false);
+  }
+
+  /** Close quarters: sabres or bayonets whistling and clashing, a scuffle, and horses milling if there are any. */
+  melee(pos: THREE.Vector3, duration: number, delay = 0, horses = true) {
     if (!this.ready) return;
     const t0 = this.ctx!.currentTime + delay;
     const dur = Math.min(4, Math.max(0.5, duration));
@@ -436,7 +447,7 @@ export class BattleAudio {
       t += rand(0.07, 0.2);
     }
     this.burst(bus, t0, dur + 0.4, 'bandpass', 420, 0.5, 0.18, 0.08); // shouting, trampling
-    this.hooves(pos, dur, delay, false);
+    if (horses) this.hooves(pos, dur, delay, false);
   }
 
   // -- signals -------------------------------------------------------------------

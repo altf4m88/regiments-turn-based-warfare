@@ -144,6 +144,8 @@ export class RegimentVisual {
   private aimHeading: number | null = null;
   private aimUntil = 0;
   private charge: Charge | null = null;
+  /** Bayonets levelled, to make or receive a charge, while now is in [from, to]. */
+  private bayonets = { from: -1, to: -1 };
   private timeline: Timed[] = [];
   private flag: THREE.Mesh | null = null;
   private works: THREE.Mesh | null = null;
@@ -324,6 +326,22 @@ export class RegimentVisual {
     this.updateLabel();
   }
 
+  /**
+   * Seconds until this regiment, marching the rest of its current route and then `steps`,
+   * reaches the centre of tile (tx, ty); null if the route doesn't pass it.
+   */
+  etaTo(steps: { x: number; y: number }[], tx: number, ty: number): number | null {
+    const route = [...this.path.map(p => ({ x: Math.floor(p.x / TILE), y: Math.floor(p.y / TILE) })), ...steps];
+    let t = 0, px = this.anchor.x, pz = this.anchor.y;
+    for (const s of route) {
+      const cx = (s.x + 0.5) * TILE, cz = (s.y + 0.5) * TILE;
+      t += Math.hypot(cx - px, cz - pz) / (SPEED[this.type] * this.terrainFactorAt(s.x, s.y));
+      px = cx; pz = cz;
+      if (s.x === tx && s.y === ty) return t;
+    }
+    return null;
+  }
+
   /** Boots, horns, hooves or wheels for the march just ordered, lasting as long as it will take. */
   private marchSound() {
     let dist = 0;
@@ -391,6 +409,26 @@ export class RegimentVisual {
     }
   }
 
+  /**
+   * One extra man brought down among the regiment at sim time `at`, for losses too small to
+   * cost it one of its figures (a few riders lost riding a gap). He falls and stays as a corpse.
+   */
+  dropCasualty(at: number) {
+    this.timeline.push({
+      at,
+      fn: () => {
+        if (this.destroyed) return;
+        const near = this.rankFigures().find(g => !g.dying);
+        const f = this.makeFigure('rank');
+        f.x = (near?.x ?? this.anchor.x) + rand(-0.15, 0.15);
+        f.z = (near?.z ?? this.anchor.y) + rand(-0.15, 0.15);
+        f.heading = near?.heading ?? this.heading;
+        this.figures.push(f);
+        this.kill(f);
+      },
+    });
+  }
+
   private kill(f: Figure) {
     if (f.dying) return;
     f.dying = true;
@@ -426,7 +464,7 @@ export class RegimentVisual {
    * Plays this regiment's attack on a target point and returns the sim time at
    * which the damage lands (so casualties drop when the shot arrives).
    */
-  attack(target: THREE.Vector3, now: number, delay = 0, opts: { intoSquare?: boolean } = {}): number {
+  attack(target: THREE.Vector3, now: number, delay = 0, opts: { intoSquare?: boolean; wheel?: boolean; bayonet?: boolean } = {}): number {
     const t0 = now + delay;
     const me = this.pos3();
     const dx = target.x - me.x, dz = target.z - me.z;
@@ -452,6 +490,32 @@ export class RegimentVisual {
           this.ctx.effects.hoofDust(target, 2);
           this.ctx.audio.melee(target, 0.55 + 0.6);
           for (const f of this.figures) if (f.rider && !f.dying) f.slashAt = this.now + Math.random() * 0.35;
+        },
+      });
+      return contact;
+    }
+
+    if (opts.bayonet) {
+      // Bayonet charge: the line levels its muskets, runs in behind the drum and the
+      // officer's sword, crashes into the enemy front, then falls back to its ground.
+      this.aimHeading = toward;
+      this.aimUntil = t0 + 4.5;
+      const reach = Math.max(0, dist - 0.55);
+      const dur = 0.45 + reach / 1.6;
+      const start = t0 + 0.35;
+      const contact = start + dur;
+      this.charge = { start, contact, hold: 0.8, back: 1.6, dx: fx * reach, dz: fz * reach, target: target.clone() };
+      this.bayonets = { from: t0 + 0.2, to: contact + 0.8 };
+      const officer = this.figures.find(f => f.role === 'officer' && !f.dying);
+      if (officer) officer.poseUntil = contact + 0.8;
+      this.ctx.audio.drum(me);
+      this.ctx.audio.bayonetCharge(me, target, contact - now);
+      this.timeline.push({
+        at: contact,
+        fn: () => {
+          this.ctx.effects.sparks(new THREE.Vector3(target.x, target.y + 0.3, target.z), 18);
+          this.ctx.effects.hoofDust(target, 3);
+          for (const f of this.figures) if (f.role === 'rank' && !f.dying) f.slashAt = this.now + Math.random() * 0.6;
         },
       });
       return contact;
@@ -490,7 +554,8 @@ export class RegimentVisual {
         const h = this.heading + this.slotOf(f).h;
         return Math.sin(h) * fx + Math.cos(h) * fz > 0.3;
       });
-    } else if (this.type !== 'line_infantry') {
+    } else if (this.type !== 'line_infantry' || opts.wheel) {
+      // A line only fires ahead, unless it wheels to fire into a gap beside it.
       this.aimHeading = toward;
       this.aimUntil = t0 + 3.0;
     }
@@ -517,6 +582,16 @@ export class RegimentVisual {
       });
     }
     return volley ? t0 + base + 0.08 : t0 + base + 0.3;
+  }
+
+  /** Levels bayonets to receive a charge that strikes at `contact`. */
+  brace(now: number, contact: number) {
+    if (this.type !== 'line_infantry' && this.type !== 'light_infantry') return;
+    this.bayonets = { from: Math.max(now, contact - 1.2), to: contact + 0.8 };
+    if (this.type === 'line_infantry') {
+      const officer = this.figures.find(f => f.role === 'officer' && !f.dying);
+      if (officer) officer.poseUntil = contact + 0.8;
+    }
   }
 
   private chargeOffset(now: number) {
@@ -619,6 +694,8 @@ export class RegimentVisual {
       const slotH = this.heading + this.slotOf(f).h;
       let wantH = dist > 0.12 ? Math.atan2(dx, dz) : slotH;
       if (moving && dist < 0.4) wantH = this.heading;
+      // Infantry fall back from a charge facing the enemy, not turning their backs.
+      if (this.charge && !f.rider && now >= this.charge.contact) wantH = slotH;
       if (f.aimFrom >= 0 && now >= f.aimFrom && now <= f.aimTo && this.aimHeading !== null) wantH = this.aimHeading + this.slotOf(f).h * 0.3;
       if (!moving && dist <= 0.12) wantH += Math.sin(now * 0.4 + f.rnd * 20) * 0.06;
       const fh = angleDelta(f.heading, wantH);
@@ -655,7 +732,11 @@ export class RegimentVisual {
   }
 
   private terrainFactor() {
-    const tx = Math.floor(this.anchor.x / TILE), ty = Math.floor(this.anchor.y / TILE);
+    return this.terrainFactorAt(Math.floor(this.anchor.x / TILE), Math.floor(this.anchor.y / TILE));
+  }
+
+  /** How fast this regiment marches over a tile, relative to open ground. */
+  private terrainFactorAt(tx: number, ty: number) {
     const t = this.ctx.model.terrainAt(tx, ty);
     if (this.ctx.model.bridgeAt(tx, ty)) return 1;
     switch (t) {
@@ -713,6 +794,7 @@ export class RegimentVisual {
     switch (f.foot) {
       case 'line':
       case 'light':
+        if (now >= this.bayonets.from && now <= this.bayonets.to) return 'charge';
         return f.aimFrom >= 0 && now >= f.aimFrom && now <= f.aimTo ? 'aim' : 'carry';
       case 'officer':
       case 'lightOfficer':
@@ -790,6 +872,10 @@ export class RegimentVisual {
       _m2.makeTranslation(0, 0.3, 0);
       _m2.multiply(_m3.makeRotationX(beat));
       _m2.multiply(_m3.makeTranslation(0, -0.3, 0));
+      push(armBatch, _m3.multiplyMatrices(root, _m2));
+    } else if (pose === 'charge' && f.slashAt >= 0 && now >= f.slashAt && now < f.slashAt + 0.4 && !f.dying) {
+      // A bayonet thrust: the musket drives forward and back.
+      _m2.makeTranslation(0, 0, Math.sin(((now - f.slashAt) / 0.4) * Math.PI) * 0.09);
       push(armBatch, _m3.multiplyMatrices(root, _m2));
     } else {
       push(armBatch, root);

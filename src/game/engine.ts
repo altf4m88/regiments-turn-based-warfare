@@ -9,6 +9,35 @@ const getOrdinal = (n: number) => {
   return n + (s[(v - 20) % 10] || s[v] || s[0]);
 };
 
+/** Id prefixes per unit type, as in the starting regiments (p1-l1, p2-li2, p1-c1, p2-h1, p1-ch1). */
+const ID_PREFIX: Record<UnitType, string> = { line_infantry: 'l', light_infantry: 'li', cannon: 'c', hussars: 'h', chasseurs: 'ch' };
+
+/**
+ * A short id for a new regiment in the same style as the starting ones (p1-l7),
+ * never reusing one a destroyed regiment had.
+ */
+export const nextRegimentId = (state: Pick<GameState, 'regiments' | 'idCounters'>, owner: number, type: UnitType) => {
+  const prefix = `p${owner}-${ID_PREFIX[type]}`;
+  const used = Math.max(
+    state.idCounters?.[prefix] ?? 0,
+    ...state.regiments.map(r => (r.id.startsWith(prefix) ? Number(r.id.slice(prefix.length)) || 0 : 0)),
+  );
+  return { id: `${prefix}${used + 1}`, idCounters: { ...state.idCounters, [prefix]: used + 1 } };
+};
+
+/** Spawn names the CLI accepts, mapped to unit types. */
+export const parseUnitType = (input: string): UnitType | null => {
+  const t = input.trim().toLowerCase().replace(/[\s-]+/g, '_');
+  const aliases: Record<string, UnitType> = {
+    line: 'line_infantry', line_infantry: 'line_infantry',
+    light: 'light_infantry', light_infantry: 'light_infantry',
+    cannon: 'cannon', cannons: 'cannon', artillery: 'cannon',
+    hussar: 'hussars', hussars: 'hussars',
+    chasseur: 'chasseurs', chasseurs: 'chasseurs',
+  };
+  return aliases[t] ?? null;
+};
+
 export const NATIONS: Record<Nation, { name: string; adjective: string }> = {
   british: { name: 'Britain', adjective: 'British' },
   french: { name: 'France', adjective: 'French' },
@@ -43,12 +72,16 @@ const generateStandardColor = () => {
   return colors[Math.floor(Math.random() * colors.length)];
 };
 
+/**
+ * Supply cost of a reinforcement: deliberately steep, so generals fight with the army they
+ * have. On +50 base income a side can afford a new line regiment about every six turns.
+ */
 export const UNIT_COSTS: { [key in UnitType]: number } = {
-  line_infantry: 100,
-  light_infantry: 120,
-  cannon: 200,
-  hussars: 150,
-  chasseurs: 180,
+  line_infantry: 300,
+  light_infantry: 360,
+  cannon: 600,
+  hussars: 450,
+  chasseurs: 540,
 };
 
 export const SUPPLY_PER_TURN = 50;
@@ -320,11 +353,56 @@ export const getInitialState = (nations: { [player: number]: Nation } = DEFAULT_
       2: { provider: 'gemini', apiKey: '', model: DEFAULT_MODELS.gemini, claudeApiKey: '', claudeModel: DEFAULT_MODELS.claude, thinkingLevel: DEFAULT_THINKING_LEVEL, langsmithApiKey: '', langsmithProject: 'regiments-p2' }
     },
     monologueHistory: [],
-    nations: { ...nations }
+    nations: { ...nations },
+    // Start numbering reinforcements after the starting regiments, so no id is ever reused.
+    idCounters: regiments.reduce<Record<string, number>>((acc, r) => {
+      const m = /^(p\d+-[a-z]+?)(\d+)$/.exec(r.id);
+      if (m) acc[m[1]] = Math.max(acc[m[1]] ?? 0, Number(m[2]));
+      return acc;
+    }, {}),
   };
 };
 
-export const calculateDamage = (attacker: Regiment, defender: Regiment, defenderTerrain: Tile['terrain']): number => {
+/** In Human vs AI, the person commands Player 1 and the LLM general commands Player 2. */
+export const VERSUS_HUMAN_PLAYER = 1;
+export const VERSUS_AI_PLAYER = 2;
+
+/** Whether an LLM general commands this player: both in AI Gameplay, Player 2 in Human vs AI. */
+export const isAiPlayer = (state: Pick<GameState, 'gameMode'>, player: number) =>
+  state.gameMode === 'ai' || (state.gameMode === 'versus' && player === VERSUS_AI_PLAYER);
+
+/**
+ * Whether an attack from (x, y) hits a regiment in the flank. Its front is the 90° cone
+ * ahead of its facing (facing north: a smaller y, and no more columns to the side than
+ * rows ahead); an attack from anywhere else, the side or the rear, is a flank attack.
+ */
+export const isFlankAttack = (defender: Pick<Regiment, 'x' | 'y' | 'facing'>, x: number, y: number) => {
+  const dx = x - defender.x, dy = y - defender.y;
+  const [ahead, aside] =
+    defender.facing === 'north' ? [-dy, dx] :
+    defender.facing === 'south' ? [dy, dx] :
+    defender.facing === 'east' ? [dx, dy] : [-dx, dy];
+  return !(ahead > 0 && Math.abs(aside) <= ahead);
+};
+
+/**
+ * Line infantry that attacks an adjacent enemy closes with the bayonet instead of
+ * firing a volley. A square holds its ground and fires.
+ */
+export const isBayonetCharge = (attacker: Pick<Regiment, 'type' | 'isBoxFormation' | 'x' | 'y'>, defender: Pick<Regiment, 'x' | 'y'>) =>
+  attacker.type === 'line_infantry' && !attacker.isBoxFormation &&
+  Math.max(Math.abs(attacker.x - defender.x), Math.abs(attacker.y - defender.y)) === 1;
+
+/** Shock of a bayonet charge: the charging side hits harder and the side receiving it replies weaker. */
+export const BAYONET_CHARGE_BONUS = 1.2;
+export const BAYONET_REPLY_FACTOR = 0.9;
+
+/**
+ * `melee` marks the two halves of a bayonet charge: 'charge' for the charging
+ * regiment's blow and 'reply' for the defender fighting back. In a melee neither
+ * side is protected by earthworks or palisades.
+ */
+export const calculateDamage = (attacker: Regiment, defender: Regiment, defenderTerrain: Tile['terrain'], melee?: 'charge' | 'reply'): number => {
   let terrainBonus = getTerrainDefenseBonus(defenderTerrain);
   
   // Buildings bonus only for infantry
@@ -333,27 +411,16 @@ export const calculateDamage = (attacker: Regiment, defender: Regiment, defender
   }
 
   const baseDefense = defender.defense;
-  const entrenchBonus = defender.isEntrenched ? 0.6 : 0;
-  const palisadeBonus = defender.isPalisaded ? 0.7 : 0;
+  const entrenchBonus = defender.isEntrenched && !melee ? 0.6 : 0;
+  const palisadeBonus = defender.isPalisaded && !melee ? 0.7 : 0;
   
-  // Flanking damage
+  // Flanking damage: an attack from the side or the rear. A square has no flank.
   let flankingBonus = 1.0;
-  if (!defender.isBoxFormation) {
-    const dx = attacker.x - defender.x;
-    const dy = attacker.y - defender.y;
-    let isBehind = false;
-    switch (defender.facing) {
-      case 'north': isBehind = dy > 0; break;
-      case 'south': isBehind = dy < 0; break;
-      case 'east': isBehind = dx < 0; break;
-      case 'west': isBehind = dx > 0; break;
-    }
-    if (isBehind) {
-      if (attacker.type === 'hussars' && defender.type === 'line_infantry') {
-        flankingBonus = 2.0; // Hussars double damage vs Line Infantry flanks
-      } else {
-        flankingBonus = 1.5;
-      }
+  if (!defender.isBoxFormation && isFlankAttack(defender, attacker.x, attacker.y)) {
+    if (attacker.type === 'hussars' && defender.type === 'line_infantry') {
+      flankingBonus = 2.0; // Hussars double damage vs Line Infantry flanks
+    } else {
+      flankingBonus = 1.5;
     }
   }
 
@@ -369,7 +436,7 @@ export const calculateDamage = (attacker: Regiment, defender: Regiment, defender
     const dist = Math.max(Math.abs(attacker.x - defender.x), Math.abs(attacker.y - defender.y));
     if (dist <= 1) bonus = 0.3;
     
-    if (defender.isEntrenched) {
+    if (defender.isEntrenched && !melee) {
       bonus *= 0.5; // Cannons less effective vs entrenched
     }
     if (defender.isBoxFormation) {
@@ -388,6 +455,9 @@ export const calculateDamage = (attacker: Regiment, defender: Regiment, defender
     bonus *= 0.5;
   }
 
+  if (melee === 'charge') bonus *= BAYONET_CHARGE_BONUS;
+  if (melee === 'reply') bonus *= BAYONET_REPLY_FACTOR;
+
   const effectiveDefense = Math.min(baseDefense + terrainBonus + entrenchBonus + palisadeBonus, 0.95);
   const rawDamage = (attacker.men * attacker.attack * bonus) * (1 - effectiveDefense);
   const variance = 0.9 + Math.random() * 0.2;
@@ -396,10 +466,24 @@ export const calculateDamage = (attacker: Regiment, defender: Regiment, defender
 
 /**
  * Resolves one engagement: the attacker's damage and the defender's return
- * fire, after the special rules for skirmishers, charging hussars and squares.
+ * fire, after the special rules for bayonet charges, skirmishers, charging hussars
+ * and squares.
  * Shared by click-to-attack and the `eg` command so they can never disagree.
  */
 export const resolveAttack = (attacker: Regiment, defender: Regiment, map: Tile[][]) => {
+  if (isBayonetCharge(attacker, defender)) {
+    // Hand to hand: the defender always fights back, but a regiment caught in
+    // the flank or rear (a square has none) fights back at half strength.
+    const caughtInFlank = !defender.isBoxFormation && isFlankAttack(defender, attacker.x, attacker.y);
+    const damage = calculateDamage(attacker, defender, map[defender.y][defender.x].terrain, 'charge');
+    const reply = calculateDamage(defender, attacker, map[attacker.y][attacker.x].terrain, 'reply');
+    return {
+      damage: Math.floor(Math.min(defender.men, damage)),
+      counterDamage: Math.floor(Math.min(attacker.men, caughtInFlank ? reply * 0.5 : reply)),
+      bayonet: true,
+    };
+  }
+
   const damage = calculateDamage(attacker, defender, map[defender.y][defender.x].terrain);
   const dist = Math.max(Math.abs(attacker.x - defender.x), Math.abs(attacker.y - defender.y));
   let counterDamage = (defender.range >= dist && isTargetInFiringLine(defender, attacker.x, attacker.y))
@@ -421,6 +505,7 @@ export const resolveAttack = (attacker: Regiment, defender: Regiment, map: Tile[
   return {
     damage: Math.floor(Math.min(defender.men, damage)),
     counterDamage: Math.floor(Math.min(attacker.men, counterDamage)),
+    bayonet: false,
   };
 };
 
@@ -462,14 +547,15 @@ export const getZoCStatus = (x: number, y: number, movingUnit: Regiment, regimen
   const top = enemyRegiments.find(r => r.x === x && r.y === y - 1);
   const bottom = enemyRegiments.find(r => r.x === x && r.y === y + 1);
 
-  const isGap = (left && right) || (top && bottom);
+  const pair = left && right ? [left, right] : top && bottom ? [top, bottom] : null;
 
-  if (!isGap) return { canPass: true, takesDamage: false };
+  if (!pair) return { canPass: true, takesDamage: false };
 
   const isCavalry = movingUnit.type === 'hussars' || movingUnit.type === 'chasseurs';
   
   if (isCavalry) {
-    return { canPass: true, takesDamage: true };
+    // The two regiments either side fire into the gap as the horsemen ride through.
+    return { canPass: true, takesDamage: true, shooters: pair.map(r => ({ x: r.x, y: r.y })) };
   } else {
     return { canPass: false, takesDamage: false };
   }

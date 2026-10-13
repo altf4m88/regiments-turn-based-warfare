@@ -2,8 +2,17 @@
 It's kinda mix of chess and Total War mechanics, you move your Regiments per turn, manage supply and capture points.
 This game specifically made to be playable by Large-Language Model, my purpose is to study LLM tactical awareness and how LLM compete strategically to achieve desired objectives with resource in mind.
 
+# Game modes
+On the start screen, choose the army Player 1 commands (British or French; Player 2 takes the other), then a mode:
+
+- **Manual Play**: you command both armies, taking turns at the same screen.
+- **Human vs AI**: you command Player 1, and an AI general commands Player 2. Choose its provider, model and thinking level in the dialog that opens. On its turn the general moves by itself: you can watch, select regiments to inspect them and use the CLI's information commands (`ls`, `status` and so on), but your orders wait until your turn. In 3D the camera stays on your side of the field and follows the enemy's moves.
+- **AI Gameplay**: an AI general commands each army, and you watch.
+
+**Pause AI** in the header stops the AI generals once the current turn ends. If an AI general's turn fails, for example because of a missing key, an API error or a rate limit, the battle waits for you: **Retry AI turn** runs it again from where it stopped, and so does saving new settings in *AI Settings*.
+
 # AI Generals
-In *AI Settings*, each player's general runs on **Gemini** (Google) or **Claude** (Anthropic), so you can pit one against the other:
+In *AI Settings*, each AI player's general runs on **Gemini** (Google) or **Claude** (Anthropic), so you can pit one against the other:
 
 | Provider | Models | Key |
 | :--- | :--- | :--- |
@@ -33,6 +42,8 @@ The number of figures tracks each regiment's strength.
 - Line volleys ripple down the ranks with muzzle flashes and drifting powder smoke, and the target returns fire.
 - Cannon recoil, and the round shot arcs, grazes and bounces through its target.
 - Hussars charge in with sabres raised, clash, and wheel back.
+- Cavalry riding through a gap in an enemy line draw a volley from the regiments either side, which wheel to fire into the gap as the riders pass.
+- Line infantry engaging an adjacent enemy level their bayonets and charge to the drum behind their officer; the defenders brace to meet them, and both sides' losses fall at the clash.
 - Men fall when the shot lands and stay on the field. Regiments that are wiped out drop their colours with a "ROUTED" marker.
 - Entrenching throws up earthworks, cannon erect palisades, units wade through fords, and reinforcements march out of the command centre.
 - Flags, trees and grass move in the wind, and the water flows.
@@ -41,7 +52,7 @@ The number of figures tracks each regiment's strength.
   - cannon, and round shot landing
   - boots marching behind the drum, and the Rifles' bugle-horn
   - galloping squadrons and gun teams rumbling into place
-  - sabres whistling and clashing in a charge
+  - sabres whistling and clashing in a charge, and a bayonet charge going in with a cheer
   - bugle calls when the capture point or a depot changes hands, a flare-up as each capture-point brazier is lit, and a victory fanfare
 
 **Playing in 3D.** Hovering a tile shows its terrain, MP cost and defence, plus a march path or an "engage" hint. The selected regiment's march range, dangerous gaps in the enemy line, firing arc and attackable targets are painted on the ground. Clicking a distant reachable tile marches there using the same `mv` command the CLI and the AI use. At every turn change the camera swings round behind the army whose turn it is. The **Follow** camera (on by default in AI mode) flies to the action, and a minimap shows where you are looking.

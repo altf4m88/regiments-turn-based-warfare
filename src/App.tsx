@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   Shield, 
   Sword, 
+  Swords,
   Move, 
   Users, 
   ChevronRight, 
@@ -36,6 +37,9 @@ import {
   Terminal,
   Settings,
   Cpu,
+  Minus,
+  Pause,
+  Play,
   X,
   Box,
   LayoutGrid
@@ -44,10 +48,11 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
 import { Client } from "langsmith";
-import { Regiment, Tile, GameState, UnitType, Facing, GameAnimation, AiConfig, AiProvider, Nation, ThinkingLevelSetting } from './game/types';
-import { getInitialState, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath, resolveAttack, NATIONS, nationOf, nationsFor } from './game/engine';
+import { Regiment, Tile, GameState, GameMode, UnitType, Facing, GameAnimation, AiConfig, AiProvider, Nation, ThinkingLevelSetting } from './game/types';
+import { getInitialState, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath, resolveAttack, nextRegimentId, parseUnitType, NATIONS, nationOf, nationsFor, isAiPlayer, VERSUS_AI_PLAYER } from './game/engine';
 import { AI_MODELS, AI_PROVIDERS, THINKING_LEVELS, resolveAiModel } from './ai/models';
 import { AiSession, startAiSession } from './ai/session';
+import { Markdown, plainText } from './ui/Markdown';
 
 // The 3D battlefield (three.js) is code-split so the 2D view stays light.
 const BattlefieldView = lazy(() => import('./three/BattlefieldView'));
@@ -100,6 +105,28 @@ const GameAnimations = ({ animations, mapRotation }: { animations: GameAnimation
                 transition={{ duration: 0.8 }}
                 className="absolute w-8 h-8 -ml-4 -mt-4 rounded-full bg-white/20 blur-md"
               />
+            );
+          }
+
+          if (anim.type === 'attack' && anim.bayonet) {
+            // Bayonet charge: crossed blades rush the enemy and clash on their tile.
+            return (
+              <div key={anim.id} className="absolute pointer-events-none">
+                <motion.div
+                  initial={{ x: fromX, y: fromY, opacity: 1, scale: 0.8, rotate: -mapRotation }}
+                  animate={{ x: toX, y: toY, opacity: [1, 1, 0], scale: [0.8, 1.1, 1.5], rotate: -mapRotation }}
+                  transition={{ duration: 0.7, ease: 'easeIn' }}
+                  className="absolute -ml-4 -mt-4 text-white drop-shadow-[0_0_4px_rgba(0,0,0,0.8)]"
+                >
+                  <Swords size={32} />
+                </motion.div>
+                <motion.div
+                  initial={{ x: toX, y: toY, opacity: 0, scale: 0.4 }}
+                  animate={{ opacity: [0, 0.9, 0], scale: [0.4, 1.6, 2] }}
+                  transition={{ duration: 0.5, delay: 0.55 }}
+                  className="absolute w-10 h-10 -ml-5 -mt-5 rounded-full bg-white/70 blur-sm"
+                />
+              </div>
             );
           }
 
@@ -158,6 +185,32 @@ const GameAnimations = ({ animations, mapRotation }: { animations: GameAnimation
               >
                 -{anim.damage}
               </motion.div>
+            );
+          }
+
+          if (anim.type === 'gauntlet') {
+            // Crossfire from the line either side of the gap, and the riders' losses in it.
+            return (
+              <div key={anim.id} className="absolute pointer-events-none">
+                {(anim.shooters ?? []).flatMap((s, i) => [...Array(4)].map((_, j) => (
+                  <motion.div
+                    key={`${anim.id}-${i}-${j}`}
+                    initial={{ x: s.x * TILE_SIZE + TILE_SIZE / 2, y: s.y * TILE_SIZE + TILE_SIZE / 2, opacity: 1, scale: 0.5 }}
+                    animate={{ x: toX + (Math.random() - 0.5) * 24, y: toY + (Math.random() - 0.5) * 24, opacity: 0, scale: 1 }}
+                    transition={{ duration: 0.4, delay: j * 0.05 }}
+                    className="absolute w-2 h-2 rounded-full bg-white/80 blur-[1px]"
+                  />
+                )))}
+                <motion.div
+                  initial={{ x: toX, y: toY, opacity: 0, scale: 0.5, rotate: -mapRotation }}
+                  animate={{ opacity: 1, scale: 1.2, y: toY - 40, rotate: -mapRotation }}
+                  exit={{ opacity: 0 }}
+                  transition={{ delay: 0.3 }}
+                  className="absolute -ml-4 -mt-8 text-red-600 font-bold text-lg z-[60] drop-shadow-sm"
+                >
+                  -{anim.damage}
+                </motion.div>
+              </div>
             );
           }
 
@@ -226,14 +279,18 @@ const AiConfigModal = ({
   onClose, 
   aiConfigs, 
   onSave,
-  nations
+  nations,
+  players = [1, 2],
 }: { 
   isOpen: boolean; 
   onClose: () => void; 
   aiConfigs: { [key: number]: AiConfig };
   onSave: (configs: { [key: number]: AiConfig }) => void;
   nations: { [player: number]: Nation };
+  /** The players commanded by an LLM general: both, or only your opponent in Human vs AI. */
+  players?: number[];
 }) => {
+  const versus = players.length === 1;
   const [localConfigs, setLocalConfigs] = useState(aiConfigs);
 
   if (!isOpen) return null;
@@ -243,23 +300,25 @@ const AiConfigModal = ({
       <motion.div 
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
-        className="bg-[#E4E3E0] border-2 border-[#141414] p-8 max-w-2xl w-full max-h-full overflow-y-auto shadow-2xl flex flex-col gap-6"
+        className={cn("bg-[#E4E3E0] border-2 border-[#141414] p-8 w-full max-h-full overflow-y-auto shadow-2xl flex flex-col gap-6", versus ? "max-w-md" : "max-w-2xl")}
       >
         <div className="flex justify-between items-center border-b border-[#141414] pb-4">
-          <h2 className="text-2xl font-bold uppercase tracking-tight">AI General Configuration</h2>
+          <h2 className="text-2xl font-bold uppercase tracking-tight">{versus ? 'Your Opponent' : 'AI General Configuration'}</h2>
           <button onClick={onClose} className="hover:rotate-90 transition-transform">
             <X size={24} />
           </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          {[1, 2].map(playerNum => {
+        <div className={cn("grid grid-cols-1 gap-8", !versus && "md:grid-cols-2")}>
+          {players.map(playerNum => {
             const config = localConfigs[playerNum];
             const ai = resolveAiModel(config);
             const update = (patch: Partial<AiConfig>) => setLocalConfigs(prev => ({ ...prev, [playerNum]: { ...prev[playerNum], ...patch } }));
             return (
             <div key={playerNum} className="space-y-4 p-4 border border-[#141414]/20 bg-white/50">
-              <h3 className={cn("font-bold uppercase text-sm border-b border-[#141414] pb-2", SIDE_UI[nations[playerNum]].text)}>Player {playerNum} · {NATIONS[nations[playerNum]].adjective}</h3>
+              <h3 className={cn("font-bold uppercase text-sm border-b border-[#141414] pb-2", SIDE_UI[nations[playerNum]].text)}>
+                Player {playerNum} · {NATIONS[nations[playerNum]].adjective}{versus && ' · AI general'}
+              </h3>
               
               <div className="space-y-1">
                 <label className="text-[10px] uppercase font-bold opacity-60">AI Provider</label>
@@ -391,7 +450,9 @@ const AiConfigModal = ({
 
         <div className="text-[10px] uppercase opacity-50 font-mono leading-relaxed">
           * Your API keys are kept in memory only and never saved to any server; requests go straight from this browser to Google or Anthropic.
-          Pit Gemini against Claude, or give each side a different model or thinking level, to see how they compete tactically.
+          {versus
+            ? ` You command Player ${3 - players[0]} (${NATIONS[nations[3 - players[0]]].adjective}); this general commands the enemy army.`
+            : ' Pit Gemini against Claude, or give each side a different model or thinking level, to see how they compete tactically.'}
         </div>
 
         <div className="flex gap-4 mt-4">
@@ -402,7 +463,7 @@ const AiConfigModal = ({
             }}
             className="flex-1 bg-[#141414] text-[#E4E3E0] p-3 uppercase font-bold hover:bg-opacity-90 transition-all"
           >
-            Deploy AI Generals
+            {versus ? 'Deploy AI General' : 'Deploy AI Generals'}
           </button>
           <button 
             onClick={onClose}
@@ -416,6 +477,9 @@ const AiConfigModal = ({
   );
 };
 
+/** CLI commands that only show information, so they also work on an AI general's turn. */
+const READ_ONLY_COMMANDS = new Set(['help', 'status', 'whoami', 'ls', 'export', 'clear']);
+
 export default function App() {
   const [gameState, setGameState] = useState<GameState>(getInitialState());
   const [hoveredTile, setHoveredTile] = useState<Tile | null>(null);
@@ -426,8 +490,18 @@ export default function App() {
   const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(true);
   const [isAiThinking, setIsAiThinking] = useState(false);
   const [aiMonologue, setAiMonologue] = useState<string | null>(null);
+  const [dispatchExpanded, setDispatchExpanded] = useState(false);
+  const [dispatchMinimized, setDispatchMinimized] = useState(() => {
+    try {
+      return localStorage.getItem('regiments.dispatch') === 'minimized';
+    } catch {
+      return false;
+    }
+  });
   const [aiInstructions, setAiInstructions] = useState<string>('');
   const [showAiConfig, setShowAiConfig] = useState(false);
+  // Which battle the start screen's AI settings will begin: AI vs AI, or you against one AI.
+  const [aiSetupMode, setAiSetupMode] = useState<'ai' | 'versus'>('ai');
   const [isArchiveOpen, setIsArchiveOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'3d' | '2d'>(() => {
     try {
@@ -444,7 +518,23 @@ export default function App() {
     }
   });
   const aiTurnRef = useRef<{ turn: number, player: number } | null>(null);
+  // Bumped when a battle is abandoned, so an AI turn still in flight stops touching the game.
+  const battleRef = useRef(0);
+  const [aiPaused, setAiPaused] = useState(false);
+  // An AI turn that failed (no key, an API error): it waits for a retry rather than looping.
+  const [aiStalled, setAiStalled] = useState(false);
   const side = (player: number) => SIDE_UI[nationOf(gameState, player)];
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('regiments.dispatch', dispatchMinimized ? 'minimized' : 'open');
+    } catch {
+      /* storage unavailable */
+    }
+  }, [dispatchMinimized]);
+
+  // Each new dispatch starts as a short preview.
+  useEffect(() => setDispatchExpanded(false), [aiMonologue]);
 
   useEffect(() => {
     try {
@@ -463,8 +553,9 @@ export default function App() {
   }, [p1Nation]);
 
   /** Fresh battle with the chosen armies (the map is regenerated too). */
-  const startGame = (mode: 'manual' | 'ai', aiConfigs: { [key: number]: AiConfig }) => {
+  const startGame = (mode: GameMode, aiConfigs: { [key: number]: AiConfig }) => {
     aiTurnRef.current = null;
+    setMapRotation(0);
     setGameState({ ...getInitialState(nationsFor(p1Nation)), gameMode: mode, aiConfigs });
   };
 
@@ -486,7 +577,23 @@ export default function App() {
     stateStr += `Armies: Player 1 = ${NATIONS[nationOf(state, 1)].adjective}, Player 2 = ${NATIONS[nationOf(state, 2)].adjective}\n`;
     stateStr += `Current Player: Player ${state.currentPlayer}\n`;
     stateStr += `Supply: P1: ${state.supply[1]}, P2: ${state.supply[2]}\n`;
+    stateStr += `Reinforcement costs: ${Object.entries(UNIT_COSTS).map(([t, c]) => `${t} ${c}`).join(', ')}\n`;
     stateStr += `Capture Point (10:10): ${state.capturePointOwner ? `Owned by P${state.capturePointOwner} (${state.capturePointTurns}/5 turns)` : 'Uncaptured'}\n\n`;
+
+    // Objectives and terrain, so a general never has to spend an iteration on reconnaissance.
+    const tiles = state.map.flat();
+    const at = (t: Tile) => `${t.x}:${t.y}`;
+    stateStr += `--- OBJECTIVES ---\n`;
+    stateStr += `Command Centers (move any regiment onto the enemy's to win at once): ${tiles.filter(t => t.terrain === 'command_center').map(t => `P${t.owner} at ${at(t)}`).join(', ')}\n`;
+    stateStr += `Supply Nodes (+${SUPPLY_NODE_BONUS} supply per turn each to the owner; move onto one to take it): ${tiles.filter(t => t.terrain === 'supply_node').map(t => `${at(t)} (${t.owner ? `P${t.owner}` : 'neutral'})`).join(', ') || 'none'}\n\n`;
+    const glyph: Partial<Record<Tile['terrain'], string>> = { grass: '.', road: '=', forest: 'F', mountain: 'H', river: '~', buildings: 'B', supply_node: 'S', capture_point: 'X' };
+    stateStr += `--- MAP (x = column 0-19 west to east, y = row 0-19 north to south) ---\n`;
+    stateStr += `Legend: . open field, = road (0.5 MP), F forest, H hills (2 MP), ~ river (3 MP), B village, S supply node, X capture point, 1/2 command centers\n`;
+    stateStr += `      ${'0'.repeat(10)}${'1'.repeat(10)}\n      ${'0123456789'.repeat(2)}\n`;
+    state.map.forEach((row, y) => {
+      stateStr += `y=${String(y).padStart(2)}  ${row.map(t => (t.terrain === 'command_center' ? String(t.owner ?? '?') : glyph[t.terrain] ?? '?')).join('')}\n`;
+    });
+    stateStr += `\n`;
     
     stateStr += `--- REGIMENTS ---\n`;
     state.regiments.forEach(r => {
@@ -543,13 +650,16 @@ export default function App() {
   };
 
   const selectedUnit = gameState.regiments.find(r => r.id === gameState.selectedUnitId);
+  // On an AI general's turn a person can look over the field, but not give orders.
+  const humanTurn = !isAiPlayer(gameState, gameState.currentPlayer);
+  const commandable = (r: Regiment | undefined): r is Regiment => !!r && humanTurn && r.owner === gameState.currentPlayer;
 
   const handleTileClick = (x: number, y: number) => {
     if (gameState.winner) return;
 
     const unitAtTile = gameState.regiments.find(r => r.x === x && r.y === y);
 
-    if (selectedUnit && selectedUnit.owner === gameState.currentPlayer) {
+    if (commandable(selectedUnit)) {
       if (unitAtTile && unitAtTile.owner !== gameState.currentPlayer) {
         const dist = Math.max(Math.abs(selectedUnit.x - x), Math.abs(selectedUnit.y - y));
         const inFiringLine = isTargetInFiringLine(selectedUnit, x, y);
@@ -571,6 +681,10 @@ export default function App() {
       if (!unitAtTile) {
         if (selectedUnit.isBoxFormation) {
           addBattlefieldLog("Line Infantry cannot move while in Box Formation!");
+          return;
+        }
+        if (selectedUnit.isEntrenched) {
+          addBattlefieldLog("Entrenched troops must leave their earthworks before they can move!");
           return;
         }
         const dist = Math.max(Math.abs(selectedUnit.x - x), Math.abs(selectedUnit.y - y));
@@ -599,10 +713,10 @@ export default function App() {
   // In 3D, clicking a distant reachable tile marches there via the engine's `mv`
   // command (same pathfinding and MP rules the CLI and AI generals use).
   const handleTileClick3D = (x: number, y: number) => {
-    if (!gameState.winner && selectedUnit && selectedUnit.owner === gameState.currentPlayer) {
+    if (!gameState.winner && commandable(selectedUnit)) {
       const occupied = gameState.regiments.some(r => r.x === x && r.y === y);
       const dist = Math.max(Math.abs(selectedUnit.x - x), Math.abs(selectedUnit.y - y));
-      if (!occupied && dist > 1 && !selectedUnit.isBoxFormation && !selectedUnit.isPalisaded) {
+      if (!occupied && dist > 1 && !selectedUnit.isBoxFormation && !selectedUnit.isPalisaded && !selectedUnit.isEntrenched) {
         const route = findPath({ x: selectedUnit.x, y: selectedUnit.y }, { x, y }, selectedUnit, gameState.regiments, gameState.map);
         if (route && route.cost <= selectedUnit.mp) {
           executeCommand(`mv ${selectedUnit.id} ${x}:${y}`);
@@ -618,6 +732,10 @@ export default function App() {
       addBattlefieldLog(`[${unit.id}] ${unit.name} cannot move while palisaded!`);
       return;
     }
+    if (unit.isEntrenched) {
+      addBattlefieldLog(`[${unit.id}] ${unit.name} must leave its earthworks before it can move!`);
+      return;
+    }
     let newFacing = unit.facing;
     if (x > unit.x) newFacing = 'east';
     else if (x < unit.x) newFacing = 'west';
@@ -629,6 +747,7 @@ export default function App() {
     if (zocStatus.takesDamage) {
       damageTaken = Math.floor(unit.men * 0.15);
       addBattlefieldLog(`[${unit.id}] ${unit.name} took fire while bypassing enemy line! (-${damageTaken} men)`);
+      addAnimation({ type: 'gauntlet', fromX: unit.x, fromY: unit.y, toX: x, toY: y, damage: damageTaken, unitType: unit.type, shooters: zocStatus.shooters });
       if (damageTaken >= unit.men) {
         addBattlefieldLog(`[${unit.id}] ${unit.name} has been routed!`);
       }
@@ -689,7 +808,7 @@ export default function App() {
   };
 
   const handleRotate = (direction: 'cw' | 'ccw' = 'cw') => {
-    if (!selectedUnit || selectedUnit.owner !== gameState.currentPlayer || selectedUnit.mp < 1) return;
+    if (!commandable(selectedUnit) || selectedUnit.mp < 1) return;
     if (selectedUnit.isPalisaded) {
       addBattlefieldLog(`[${selectedUnit.id}] ${selectedUnit.name} cannot rotate while palisaded!`);
       return;
@@ -710,7 +829,7 @@ export default function App() {
   };
 
   const performAttack = (attacker: Regiment, defender: Regiment) => {
-    const { damage: actualDamage, counterDamage: actualCounterDamage } = resolveAttack(attacker, defender, gameState.map);
+    const { damage: actualDamage, counterDamage: actualCounterDamage, bayonet } = resolveAttack(attacker, defender, gameState.map);
 
     setGameState(prev => {
       let newRegiments = prev.regiments.map(r => {
@@ -734,13 +853,15 @@ export default function App() {
       return { ...prev, regiments: newRegiments, winner };
     });
 
-    addAnimation({ type: 'attack', fromX: attacker.x, fromY: attacker.y, toX: defender.x, toY: defender.y, unitType: attacker.type });
+    addAnimation({ type: 'attack', fromX: attacker.x, fromY: attacker.y, toX: defender.x, toY: defender.y, unitType: attacker.type, bayonet });
     addAnimation({ type: 'damage', fromX: defender.x, fromY: defender.y, damage: actualDamage });
     if (actualCounterDamage > 0) {
       addAnimation({ type: 'damage', fromX: attacker.x, fromY: attacker.y, damage: actualCounterDamage });
     }
     
-    addBattlefieldLog(`[${attacker.id}] ${attacker.name} engaged [${defender.id}] ${defender.name}.`);
+    addBattlefieldLog(bayonet
+      ? `[${attacker.id}] ${attacker.name} charged [${defender.id}] ${defender.name} with the bayonet!`
+      : `[${attacker.id}] ${attacker.name} engaged [${defender.id}] ${defender.name}.`);
     addBattlefieldLog(`Casualties - Enemy: ${actualDamage}, Own: ${actualCounterDamage}`);
     
     if (defender.isBoxFormation && (attacker.type === 'hussars' || attacker.type === 'chasseurs')) {
@@ -755,7 +876,20 @@ export default function App() {
   };
 
   const handleEntrench = () => {
-    if (!selectedUnit || selectedUnit.owner !== gameState.currentPlayer || selectedUnit.mp < 1 || selectedUnit.isEntrenched) return;
+    if (!commandable(selectedUnit) || selectedUnit.mp < 1) return;
+    if (selectedUnit.isEntrenched) {
+      // Leaving the earthworks costs 1 MP; the regiment can march on with what is left.
+      setGameState(prev => ({
+        ...prev,
+        regiments: prev.regiments.map(r => r.id === selectedUnit.id ? { ...r, isEntrenched: false, mp: r.mp - 1 } : r)
+      }));
+      addBattlefieldLog(`[${selectedUnit.id}] ${selectedUnit.name} has left its earthworks.`);
+      return;
+    }
+    if (gameState.map[selectedUnit.y][selectedUnit.x].terrain === 'capture_point') {
+      addBattlefieldLog("Cannot entrench on the Strategic Point.");
+      return;
+    }
 
     setGameState(prev => ({
       ...prev,
@@ -768,7 +902,7 @@ export default function App() {
   };
 
   const handleToggleBox = () => {
-    if (!selectedUnit || selectedUnit.owner !== gameState.currentPlayer || selectedUnit.mp < 1 || selectedUnit.type !== 'line_infantry') return;
+    if (!commandable(selectedUnit) || selectedUnit.mp < 1 || selectedUnit.type !== 'line_infantry') return;
 
     setGameState(prev => ({
       ...prev,
@@ -781,7 +915,7 @@ export default function App() {
   };
 
   const handleTogglePalisade = () => {
-    if (!selectedUnit || selectedUnit.owner !== gameState.currentPlayer || selectedUnit.mp < 1 || selectedUnit.type !== 'cannon') return;
+    if (!commandable(selectedUnit) || selectedUnit.mp < 1 || selectedUnit.type !== 'cannon') return;
 
     setGameState(prev => ({
       ...prev,
@@ -794,6 +928,7 @@ export default function App() {
   };
 
   const handleReinforce = (type: UnitType) => {
+    if (!humanTurn) return;
     const cost = UNIT_COSTS[type];
     if (gameState.supply[gameState.currentPlayer] < cost) {
       addBattlefieldLog(`Insufficient supply for ${type}. Need ${cost}.`);
@@ -838,7 +973,7 @@ export default function App() {
       return;
     }
 
-    const newId = `${gameState.currentPlayer}-${type}-${Date.now()}`;
+    const { id: newId, idCounters } = nextRegimentId(gameState, gameState.currentPlayer, type);
     const index = gameState.regiments.filter(r => r.owner === gameState.currentPlayer && r.type === type).length;
     const newUnit = createInitialRegiment(newId, type, gameState.currentPlayer, emptyNeighbor.x, emptyNeighbor.y, index, undefined, nationOf(gameState, gameState.currentPlayer));
     
@@ -852,7 +987,8 @@ export default function App() {
         ...prev.supply,
         [prev.currentPlayer]: prev.supply[prev.currentPlayer] - cost
       },
-      regiments: [...prev.regiments, newUnit]
+      regiments: [...prev.regiments, newUnit],
+      idCounters
     }));
 
     addBattlefieldLog(`Reinforcements arrived: ${newUnit.name} at (${emptyNeighbor.x}, ${emptyNeighbor.y}).`);
@@ -1029,14 +1165,9 @@ export default function App() {
 
       if (action === 'spawn') {
         const typeInput = parts.slice(1).join('_');
-        let type = typeInput as UnitType;
-        
-        // Handle common variations
-        if (typeInput === 'line' || typeInput === 'line_infantry') type = 'line_infantry';
-        if (typeInput === 'light' || typeInput === 'light_infantry') type = 'light_infantry';
-        
+        const type = parseUnitType(typeInput);
+        if (!type) { error = `Invalid unit type: ${typeInput}. Use: line_infantry, light_infantry, cannon, hussars or chasseurs.`; break; }
         const cost = UNIT_COSTS[type];
-        if (!cost) { error = `Invalid unit type: ${typeInput}. Use: line infantry, light infantry, hussars, chasseurs, or cannon.`; break; }
         if (currentState.supply[currentState.currentPlayer] < cost) { error = `Insufficient supply. Need ${cost}.`; break; }
         
         let cc: Tile | null = null;
@@ -1047,7 +1178,8 @@ export default function App() {
         const emptyNeighbor = neighbors.find(n => n.x >= 0 && n.x < 20 && n.y >= 0 && n.y < 20 && !currentState.regiments.some(r => r.x === n.x && r.y === n.y) && currentState.map[n.y][n.x].terrain !== 'river' && currentState.map[n.y][n.x].terrain !== 'mountain');
         if (!emptyNeighbor) { error = "No space around CC."; break; }
 
-        const newId = `${currentState.currentPlayer}-${type}-${Date.now()}`;
+        const { id: newId, idCounters } = nextRegimentId(currentState, currentState.currentPlayer, type);
+        currentState.idCounters = idCounters;
         const index = currentState.regiments.filter(r => r.owner === currentState.currentPlayer && r.type === type).length;
         const newUnit = createInitialRegiment(newId, type, currentState.currentPlayer, emptyNeighbor.x, emptyNeighbor.y, index, undefined, nationOf(currentState, currentState.currentPlayer));
         newUnit.mp = 0; newUnit.hasAttacked = true;
@@ -1074,6 +1206,7 @@ export default function App() {
           
           if (unit.isPalisaded) { error = "Unit is palisaded."; break; }
           if (unit.isBoxFormation) { error = "Unit is in box formation."; break; }
+          if (unit.isEntrenched) { error = "Unit is entrenched. Leave the earthworks first with 'ent' (1 MP)."; break; }
 
           const pathResult = findPath({ x: unit.x, y: unit.y }, { x, y }, unit, currentState.regiments, currentState.map);
           if (!pathResult) { error = "No valid path found."; break; }
@@ -1085,6 +1218,7 @@ export default function App() {
           let currentMp = unit.mp;
           let currentMen = unit.men;
           let currentFacing = unit.facing;
+          const gauntlets: GameAnimation[] = [];
 
           for (const step of pathResult.path) {
             if (step.x > currentX) currentFacing = 'east';
@@ -1100,6 +1234,7 @@ export default function App() {
             if (zocStatus.takesDamage) {
               stepDamage = Math.floor(currentMen * 0.15);
               localAddBattlefieldLog(`[${unit.id}] took fire while bypassing enemy line at (${step.x}, ${step.y})! (-${stepDamage} men)`);
+              gauntlets.push({ id: Math.random().toString(36).substr(2, 9), timestamp: Date.now(), type: 'gauntlet', fromX: unit.x, fromY: unit.y, toX: step.x, toY: step.y, damage: stepDamage, unitType: unit.type, shooters: zocStatus.shooters });
             }
 
             currentX = step.x;
@@ -1116,6 +1251,7 @@ export default function App() {
           currentState.regiments = currentState.regiments.map(r => 
             r.id === unit.id ? { ...r, x: currentX, y: currentY, men: currentMen, mp: currentMp, isEntrenched: false, facing: currentFacing } : r
           ).filter(r => r.men > 0);
+          currentState.animations = [...currentState.animations, ...gauntlets];
 
           if (currentMen > 0) {
             const targetTile = currentState.map[currentY][currentX];
@@ -1161,7 +1297,7 @@ export default function App() {
           if (dist > unit.range) { error = "Out of range."; break; }
           if (!isTargetInFiringLine(unit, target.x, target.y)) { error = "Not in firing line."; break; }
           
-          const { damage: actualDamage, counterDamage: actualCounterDamage } = resolveAttack(unit, target, currentState.map);
+          const { damage: actualDamage, counterDamage: actualCounterDamage, bayonet } = resolveAttack(unit, target, currentState.map);
           
           currentState.regiments = currentState.regiments.map(r => {
             if (r.id === target.id) return { ...r, men: Math.max(0, r.men - actualDamage) };
@@ -1173,23 +1309,35 @@ export default function App() {
           const timestamp = Date.now();
           currentState.animations = [
             ...currentState.animations,
-            { id: Math.random().toString(36).substr(2, 9), timestamp, type: 'attack', fromX: unit.x, fromY: unit.y, toX: target.x, toY: target.y, unitType: unit.type },
+            { id: Math.random().toString(36).substr(2, 9), timestamp, type: 'attack', fromX: unit.x, fromY: unit.y, toX: target.x, toY: target.y, unitType: unit.type, bayonet },
             { id: Math.random().toString(36).substr(2, 9), timestamp, type: 'damage', fromX: target.x, fromY: target.y, damage: actualDamage }
           ];
           if (actualCounterDamage > 0) {
             currentState.animations.push({ id: Math.random().toString(36).substr(2, 9), timestamp, type: 'damage', fromX: unit.x, fromY: unit.y, damage: actualCounterDamage });
           }
 
-          localAddBattlefieldLog(`[${unit.id}] engaged [${target.id}]. Casualties: Enemy ${actualDamage}, Own ${actualCounterDamage}`);
+          // Wiping out an army wins, as it does for attacks made from the UI.
+          if (!currentState.regiments.some(r => r.owner === 1)) currentState.winner = 2;
+          else if (!currentState.regiments.some(r => r.owner === 2)) currentState.winner = 1;
+
+          localAddBattlefieldLog(`[${unit.id}] ${bayonet ? 'charged' : 'engaged'} [${target.id}]${bayonet ? ' with the bayonet' : ''}. Casualties: Enemy ${actualDamage}, Own ${actualCounterDamage}`);
           if (target.isBoxFormation && (unit.type === 'hussars' || unit.type === 'chasseurs')) {
             localAddBattlefieldLog(`[${target.id}]'s square holds firm against the cavalry!`);
           }
-          localAddCliOutput(`Attacked [${target.id}] with [${unit.id}].`);
+          localAddCliOutput(bayonet ? `[${unit.id}] charged [${target.id}] with the bayonet.` : `Attacked [${target.id}] with [${unit.id}].`);
           break;
         }
         case 'ent': {
           const tile = currentState.map[unit.y][unit.x];
-          if (unit.mp < 1 || unit.isEntrenched || tile.terrain === 'capture_point') { 
+          if (unit.isEntrenched) {
+            // Leaving the earthworks costs 1 MP; the regiment can march on with what is left.
+            if (unit.mp < 1) { error = "Leaving the earthworks costs 1 MP."; break; }
+            currentState.regiments = currentState.regiments.map(r => r.id === unit.id ? { ...r, isEntrenched: false, mp: r.mp - 1 } : r);
+            localAddBattlefieldLog(`[${unit.id}] left its earthworks.`);
+            localAddCliOutput(`[${unit.id}] left its earthworks.`);
+            break;
+          }
+          if (unit.mp < 1 || tile.terrain === 'capture_point') { 
             error = tile.terrain === 'capture_point' ? "Cannot entrench on Strategic Point." : "Cannot entrench."; 
             break; 
           }
@@ -1210,6 +1358,7 @@ export default function App() {
         case 'rts':
         case 'rtw': {
           if (unit.mp < 1) { error = "Insufficient MP."; break; }
+          if (unit.isPalisaded) { error = "Unit is palisaded and cannot rotate."; break; }
           const directions: Facing[] = ['north', 'east', 'south', 'west'];
           const currentIndex = directions.indexOf(unit.facing);
           let newFacing: Facing;
@@ -1270,6 +1419,13 @@ export default function App() {
   const executeCommand = (cmd: string) => {
     setCommandError(null);
     setGameState(prev => {
+      if (isAiPlayer(prev, prev.currentPlayer)) {
+        const orders = cmd.split('\n').map(l => l.split('#')[0].trim().toLowerCase().split(/\s+/)[0]).filter(a => a && !READ_ONLY_COMMANDS.has(a));
+        if (orders.length) {
+          setCommandError(`The AI general commands Player ${prev.currentPlayer} this turn. Only information commands (${[...READ_ONLY_COMMANDS].join(', ')}) work until it ends.`);
+          return prev;
+        }
+      }
       const { newState, error } = applyCommands(prev, cmd);
       if (error) setCommandError(error);
       return newState;
@@ -1278,11 +1434,15 @@ export default function App() {
   };
 
   const runAiTurn = useCallback(async () => {
+    const battle = battleRef.current;
+    // False once the player abandons this battle: from then on this turn must not touch the game.
+    const live = () => battleRef.current === battle;
     const config = gameState.aiConfigs[gameState.currentPlayer];
     const { provider, apiKey, model, thinkingLevel } = resolveAiModel(config);
     if (!apiKey) {
       addBattlefieldLog(`ERROR: ${AI_PROVIDERS[provider].label} API Key for Player ${gameState.currentPlayer} not found. Please configure AI settings.`);
       setIsAiThinking(false);
+      setAiStalled(true);
       return;
     }
 
@@ -1303,7 +1463,7 @@ export default function App() {
           return await fn();
         } catch (error: any) {
           lastError = error;
-          if (session?.isRateLimit(error) && i < maxRetries - 1) {
+          if (session?.isRateLimit(error) && i < maxRetries - 1 && live()) {
             const delay = Math.pow(2, i) * 2000 + Math.random() * 1000;
             addBattlefieldLog(`AI Player ${gameState.currentPlayer} is hitting rate limits. Retrying in ${Math.round(delay/1000)}s...`);
             await new Promise(resolve => setTimeout(resolve, delay));
@@ -1352,23 +1512,31 @@ export default function App() {
         });
       }
 
-      while (!turnEnded && iteration < 5) {
-        const lastMonologues = currentGameState.monologueHistory.slice(-2);
+      while (!turnEnded && iteration < 5 && live()) {
+        // Only this general's own earlier dispatches: the enemy's plans stay secret.
+        const lastMonologues = currentGameState.monologueHistory.filter(m => m.player === currentGameState.currentPlayer).slice(-2);
         const monologueContext = lastMonologues.length > 0 
           ? `\nPREVIOUS STRATEGIC CONTEXT:\n${lastMonologues.map(m => `Turn ${m.turn} (P${m.player}): ${m.text}`).join('\n')}\n`
           : '';
 
+        const lastIteration = iteration === 4;
+        // From the second iteration on, name the regiments that haven't been used yet this turn.
+        const unused = currentGameState.regiments.filter(r =>
+          r.owner === currentGameState.currentPlayer && r.mp === r.maxMp && !r.hasAttacked && !r.isEntrenched && !r.isPalisaded);
+        const unusedNote = iteration === 0 ? '' : unused.length
+          ? `\nRegiments that have not moved or fought yet this turn: ${unused.map(r => `${r.id} (${r.mp} MP)`).join(', ')}.`
+          : '\nEvery regiment has acted this turn.';
         const prompt = `
 ${monologueContext}
-
-${turnOutput ? `\nRESULTS OF YOUR PREVIOUS ACTIONS THIS TURN:\n${turnOutput}\n` : ''}
-
+${turnOutput ? `\nRESULTS OF YOUR COMMANDS SO FAR THIS TURN:\n${turnOutput}\n` : ''}
 CURRENT GAME STATE:
 ${getGameStateString(currentGameState)}
 
-You are Player ${currentGameState.currentPlayer}. This is iteration ${iteration + 1} of 5 for your turn.
-Analyze the situation and provide your commands.
-IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you have no more actions to take. If this is your 5th iteration, you MUST issue 'end'.
+You are Player ${currentGameState.currentPlayer} (${NATIONS[nationOf(currentGameState, currentGameState.currentPlayer)].adjective}). Turn ${currentGameState.turn}, iteration ${iteration + 1} of 5.
+Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE code block with your commands.
+- The commands run in order, and you will see their results in the next iteration.
+- Every regiment's MP refills each turn, and MP you leave unused is lost.
+- \`end\` ends your turn at once and any command after it is ignored. ${lastIteration ? 'This is your last iteration: finish with `end`.' : 'Add it as the last command only once every regiment has done what you want this turn.'}${unusedNote}
 `;
 
         let response;
@@ -1400,6 +1568,8 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
         } else {
           response = await retryWithBackoff(() => chat.send(prompt));
         }
+
+        if (!live()) break;
 
         if (response.refusal) {
           // The model declined to answer: end its turn rather than retrying the same request.
@@ -1456,6 +1626,7 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
           let iterationCli: string[] = [];
 
           for (const cmd of commands) {
+            if (!live()) break;
             const trimmedCmd = cmd.trim();
             if (!trimmedCmd || trimmedCmd.startsWith('#')) continue;
 
@@ -1490,7 +1661,7 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
         }
 
         iteration++;
-        if (!turnEnded && iteration < 5) {
+        if (!turnEnded && iteration < 5 && live()) {
           addBattlefieldLog(`AI Player ${currentGameState.currentPlayer} is analyzing results...`);
           // Increased delay to stay under RPM limits
           await new Promise(resolve => setTimeout(resolve, 3500));
@@ -1499,7 +1670,7 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
 
       // Final safety check: if the turn hasn't ended after all iterations, force an end
       // This prevents the game from getting stuck if the AI fails to issue 'end'
-      if (currentGameState.currentPlayer === gameState.currentPlayer && !gameState.winner) {
+      if (live() && currentGameState.currentPlayer === gameState.currentPlayer && !gameState.winner) {
         addBattlefieldLog(`AI Player ${currentGameState.currentPlayer} turn timed out. Forcing end.`);
         const { newState } = applyCommands(currentGameState, 'end');
         setGameState(newState);
@@ -1516,6 +1687,8 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
       setTimeout(() => setAiMonologue(null), 3000);
     } catch (error: any) {
       console.error("AI Turn Error:", error);
+      if (!live()) return;
+      setAiStalled(true);
       if (session?.isRateLimit(error)) {
         addBattlefieldLog(`CRITICAL: AI Player ${gameState.currentPlayer} hit API rate limits. Please wait a minute before trying again or use a paid API key.`);
       } else {
@@ -1530,12 +1703,12 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
         }).catch(err => console.error("Failed to update LangSmith run with error:", err));
       }
     } finally {
-      setIsAiThinking(false);
+      if (live()) setIsAiThinking(false);
     }
   }, [aiInstructions, getGameStateString, gameState, executeCommand]);
 
   useEffect(() => {
-    if (gameState.gameMode === 'ai' && !gameState.winner && !isAiThinking) {
+    if (isAiPlayer({ gameMode: gameState.gameMode }, gameState.currentPlayer) && !gameState.winner && !isAiThinking && !aiPaused && !aiStalled) {
       // Check if we've already started processing this turn/player
       if (aiTurnRef.current?.turn === gameState.turn && aiTurnRef.current?.player === gameState.currentPlayer) {
         return;
@@ -1548,11 +1721,28 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
       }, 1000);
       return () => clearTimeout(timer);
     }
-  }, [gameState.gameMode, gameState.currentPlayer, gameState.winner, gameState.turn, isAiThinking, runAiTurn]);
+  }, [gameState.gameMode, gameState.currentPlayer, gameState.winner, gameState.turn, isAiThinking, aiPaused, aiStalled, runAiTurn]);
 
-  const resetGame = () => {
+  /** Runs the current AI general's turn again after it failed, from where it stopped. */
+  const retryAiTurn = () => {
     aiTurnRef.current = null;
-    setGameState(getInitialState());
+    setAiStalled(false);
+  };
+
+  // Abandons the battle and returns to the start screen. An AI turn still in flight stops
+  // there, and the AI settings (keys included) carry over to the next battle.
+  const resetGame = () => {
+    battleRef.current++;
+    aiTurnRef.current = null;
+    setIsAiThinking(false);
+    setAiMonologue(null);
+    setAiPaused(false);
+    setAiStalled(false);
+    setGameState(prev => ({ ...getInitialState(), aiConfigs: prev.aiConfigs }));
+  };
+
+  const abandonBattle = () => {
+    if (window.confirm('Abandon this battle and return to the start screen?')) resetGame();
   };
 
   const exportLogs = () => {
@@ -1601,25 +1791,36 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <button 
               onClick={() => startGame('manual', gameState.aiConfigs)}
-              className="p-8 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex flex-col items-center gap-4 group"
+              className="p-6 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex flex-col items-center gap-4 group"
             >
-              <Users size={48} className="group-hover:scale-110 transition-transform" />
+              <Users size={44} className="group-hover:scale-110 transition-transform" />
               <div className="text-center">
-                <h2 className="text-xl font-bold uppercase">Manual Play</h2>
-                <p className="text-[10px] uppercase opacity-50 font-mono mt-1">Command your troops directly</p>
+                <h2 className="text-lg font-bold uppercase">Manual Play</h2>
+                <p className="text-[10px] uppercase opacity-50 font-mono mt-1">Command both armies yourself</p>
+              </div>
+            </button>
+
+            <button 
+              onClick={() => { setAiSetupMode('versus'); setShowAiConfig(true); }}
+              className="p-6 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex flex-col items-center gap-4 group"
+            >
+              <Swords size={44} className="group-hover:scale-110 transition-transform" />
+              <div className="text-center">
+                <h2 className="text-lg font-bold uppercase">Human vs AI</h2>
+                <p className="text-[10px] uppercase opacity-50 font-mono mt-1">You command Player 1 against an AI General</p>
               </div>
             </button>
             
             <button 
-              onClick={() => setShowAiConfig(true)}
-              className="p-8 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex flex-col items-center gap-4 group"
+              onClick={() => { setAiSetupMode('ai'); setShowAiConfig(true); }}
+              className="p-6 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex flex-col items-center gap-4 group"
             >
-              <Terminal size={48} className="group-hover:scale-110 transition-transform" />
+              <Terminal size={44} className="group-hover:scale-110 transition-transform" />
               <div className="text-center">
-                <h2 className="text-xl font-bold uppercase">AI Gameplay</h2>
+                <h2 className="text-lg font-bold uppercase">AI Gameplay</h2>
                 <p className="text-[10px] uppercase opacity-50 font-mono mt-1">Watch AI Generals battle</p>
               </div>
             </button>
@@ -1630,8 +1831,9 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
             onClose={() => setShowAiConfig(false)}
             aiConfigs={gameState.aiConfigs}
             nations={nationsFor(p1Nation)}
+            players={aiSetupMode === 'versus' ? [VERSUS_AI_PLAYER] : [1, 2]}
             onSave={(configs) => {
-              startGame('ai', configs);
+              startGame(aiSetupMode, configs);
               setShowAiConfig(false);
             }}
           />
@@ -1732,10 +1934,48 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
             )}>
               Player {gameState.currentPlayer}
             </p>
+            {gameState.gameMode === 'versus' && humanTurn && (
+              <p className="text-[9px] uppercase font-mono tracking-wider opacity-60 flex items-center justify-end gap-1 whitespace-nowrap">
+                <Users size={10} /> Your command
+              </p>
+            )}
+            {!humanTurn && (() => {
+              const ai = resolveAiModel(gameState.aiConfigs[gameState.currentPlayer]);
+              const model = AI_MODELS[ai.provider].find(m => m.id === ai.model)?.label.replace(/ \(.*\)$/, '') ?? ai.model;
+              return (
+                <p className="text-[9px] uppercase font-mono tracking-wider opacity-60 flex items-center justify-end gap-1 whitespace-nowrap">
+                  <Cpu size={10} /> {model} · {ai.thinkingLevel}
+                </p>
+              );
+            })()}
           </div>
+          {aiStalled && !humanTurn && !gameState.winner && (
+            <button
+              onClick={retryAiTurn}
+              className="px-3 py-2 border border-red-700 text-red-700 text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 hover:bg-red-700 hover:text-white transition-colors"
+              title="The AI general's turn failed (see the battlefield log). Run it again from where it stopped."
+            >
+              <RotateCcw size={14} /> Retry AI turn
+            </button>
+          )}
+          {(gameState.gameMode === 'ai' || gameState.gameMode === 'versus') && (
+            <button
+              onClick={() => setAiPaused(p => !p)}
+              className={cn(
+                "px-3 py-2 border border-[#141414] text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 transition-colors",
+                aiPaused ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414] hover:text-[#E4E3E0]"
+              )}
+              title={aiPaused ? 'Resume the AI generals' : 'Pause the AI generals after the current turn'}
+            >
+              {aiPaused ? <Play size={14} /> : <Pause size={14} />}
+              {aiPaused ? (isAiThinking ? 'Pausing…' : 'Resume AI') : 'Pause AI'}
+            </button>
+          )}
           <button 
-            onClick={resetGame}
+            onClick={abandonBattle}
             className="p-2 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
+            title="Abandon this battle and return to the start screen"
+            aria-label="Abandon this battle and return to the start screen"
           >
             <RotateCcw size={18} />
           </button>
@@ -1743,26 +1983,59 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
       </header>
 
       <main className="flex-1 flex overflow-hidden relative">
-        {/* AI Monologue Bubble */}
+        {/* With the HUD column hidden, the AI general's dispatch floats as a compact card in the
+            map's top-right corner: three lines by default, expandable, or minimised to a tab. */}
         <AnimatePresence>
-          {aiMonologue && (
-            <motion.div
-              initial={{ opacity: 0, x: 20, scale: 0.9 }}
-              animate={{ opacity: 1, x: 0, scale: 1 }}
-              exit={{ opacity: 0, x: 10, scale: 0.9 }}
+          {aiMonologue && !isRightSidebarOpen && (dispatchMinimized ? (
+            <motion.button
+              key="dispatch-tab"
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              onClick={() => setDispatchMinimized(false)}
               className={cn(
-                "absolute z-[60] bottom-8 transition-all duration-300 max-w-[500px] w-full px-6 py-4 border-2 border-[#141414] shadow-2xl font-serif italic text-sm leading-relaxed bg-white",
-                isRightSidebarOpen ? "right-[280px]" : "right-8",
+                "absolute z-[60] top-4 px-3 py-2 border-2 bg-white/90 backdrop-blur-sm shadow-lg flex items-center gap-2 font-bold uppercase text-[9px] tracking-wider",
+                "right-4",
+                side(gameState.currentPlayer).bubble
+              )}
+              aria-label="Show the AI general's dispatch"
+            >
+              <Cpu size={12} /> General {gameState.currentPlayer}'s dispatch
+              <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+            </motion.button>
+          ) : (
+            <motion.div
+              key="dispatch"
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              className={cn(
+                "absolute z-[60] top-4 w-[min(380px,calc(100%-2rem))] border-2 bg-white/90 backdrop-blur-sm shadow-xl",
+                "right-4",
                 side(gameState.currentPlayer).bubble
               )}
             >
-              <div className="absolute -top-2 right-8 w-4 h-4 bg-white border-l-2 border-t-2 border-inherit rotate-45" />
-              <p className="relative z-10">"{aiMonologue}"</p>
-              <div className="mt-3 flex items-center justify-end gap-2 not-italic font-sans font-bold uppercase text-[9px] opacity-40">
-                <Cpu size={10} /> AI General {gameState.currentPlayer} Strategic Insight
+              <div className="flex items-center justify-between gap-2 px-4 pt-3 font-bold uppercase text-[9px] tracking-wider opacity-60">
+                <span className="flex items-center gap-2"><Cpu size={10} /> AI General {gameState.currentPlayer} · Dispatch</span>
+                <button onClick={() => setDispatchMinimized(true)} className="p-0.5 hover:opacity-100" aria-label="Minimise the dispatch">
+                  <Minus size={12} />
+                </button>
               </div>
+              {dispatchExpanded ? (
+                <Markdown text={aiMonologue} className="px-4 pt-1 max-h-[40vh] overflow-y-auto space-y-1.5 font-serif italic text-xs leading-relaxed" />
+              ) : (
+                <p className="px-4 pt-1 font-serif italic text-xs leading-relaxed line-clamp-3">{plainText(aiMonologue)}</p>
+              )}
+              {aiMonologue.length > 180 ? (
+                <button
+                  onClick={() => setDispatchExpanded(v => !v)}
+                  className="px-4 pt-1 pb-3 font-bold uppercase text-[9px] tracking-wider opacity-60 hover:opacity-100"
+                >
+                  {dispatchExpanded ? 'Show less' : 'Read full dispatch'}
+                </button>
+              ) : <div className="pb-3" />}
             </motion.div>
-          )}
+          ))}
         </AnimatePresence>
 
         {/* Sidebar Left: Unit Info */}
@@ -1881,7 +2154,7 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
                             <div className="grid grid-cols-2 gap-1">
                               <button 
                                 onClick={() => handleRotate('ccw')}
-                                disabled={selectedUnit.mp < 1 || selectedUnit.owner !== gameState.currentPlayer}
+                                disabled={selectedUnit.mp < 1 || !commandable(selectedUnit)}
                                 className="py-3 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30 transition-all flex items-center justify-center"
                                 title="Rotate CCW (1 MP)"
                               >
@@ -1889,7 +2162,7 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
                               </button>
                               <button 
                                 onClick={() => handleRotate('cw')}
-                                disabled={selectedUnit.mp < 1 || selectedUnit.owner !== gameState.currentPlayer}
+                                disabled={selectedUnit.mp < 1 || !commandable(selectedUnit)}
                                 className="py-3 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30 transition-all flex items-center justify-center"
                                 title="Rotate CW (1 MP)"
                               >
@@ -1898,17 +2171,20 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
                             </div>
                             <button 
                               onClick={handleEntrench}
-                              disabled={selectedUnit.mp < 1 || selectedUnit.isEntrenched || selectedUnit.owner !== gameState.currentPlayer}
-                              className="py-3 border border-[#141414] uppercase text-[10px] font-bold tracking-widest hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30 transition-all flex items-center justify-center gap-2"
+                              disabled={selectedUnit.mp < 1 || !commandable(selectedUnit)}
+                              className={cn(
+                                "py-3 border border-[#141414] uppercase text-[10px] font-bold tracking-widest disabled:opacity-30 transition-all flex items-center justify-center gap-2",
+                                selectedUnit.isEntrenched ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414] hover:text-[#E4E3E0]"
+                              )}
                             >
-                              <Shield size={14} /> Entrench
+                              <Shield size={14} /> {selectedUnit.isEntrenched ? 'Leave Earthworks (1 MP)' : 'Entrench (All MP)'}
                             </button>
                           </div>
 
                           {selectedUnit.type === 'line_infantry' && (
                             <button 
                               onClick={handleToggleBox}
-                              disabled={selectedUnit.mp < 1 || selectedUnit.owner !== gameState.currentPlayer}
+                              disabled={selectedUnit.mp < 1 || !commandable(selectedUnit)}
                               className={cn(
                                 "w-full py-3 border border-[#141414] uppercase text-[10px] font-bold tracking-widest transition-all flex items-center justify-center gap-2",
                                 selectedUnit.isBoxFormation ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414] hover:text-[#E4E3E0]"
@@ -1921,7 +2197,7 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
                           {selectedUnit.type === 'cannon' && (
                             <button 
                               onClick={handleTogglePalisade}
-                              disabled={selectedUnit.mp < 1 || selectedUnit.owner !== gameState.currentPlayer}
+                              disabled={selectedUnit.mp < 1 || !commandable(selectedUnit)}
                               className={cn(
                                 "w-full py-3 border border-[#141414] uppercase text-[10px] font-bold tracking-widest transition-all flex items-center justify-center gap-2",
                                 selectedUnit.isPalisaded ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414] hover:text-[#E4E3E0]"
@@ -1947,7 +2223,7 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
                       <button
                         key={type}
                         onClick={() => handleReinforce(type)}
-                        disabled={gameState.supply[gameState.currentPlayer] < UNIT_COSTS[type]}
+                        disabled={!humanTurn || gameState.supply[gameState.currentPlayer] < UNIT_COSTS[type]}
                         className="p-2 border border-[#141414] text-[10px] uppercase font-bold flex justify-between items-center hover:bg-[#141414] hover:text-[#E4E3E0] disabled:opacity-30 transition-all"
                       >
                         <span>{type.replace('_', ' ')}</span>
@@ -1997,7 +2273,7 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
               <BattlefieldView
                 gameState={gameState}
                 mapRotation={mapRotation}
-                aiMode={gameState.gameMode === 'ai'}
+                aiMode={!humanTurn}
                 onTileClick={handleTileClick3D}
                 onTileHover={setHoveredTile}
               />
@@ -2023,8 +2299,8 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
                 const dy = selectedUnit ? Math.abs(selectedUnit.y - y) : 0;
                 const dist = Math.max(dx, dy);
                 
-                const canMoveTo = selectedUnit && selectedUnit.owner === gameState.currentPlayer && !unit && (dist === 1) && selectedUnit.mp >= getTerrainMpCost(tile.terrain) && zocStatus.canPass;
-                const canAttack = selectedUnit && selectedUnit.owner === gameState.currentPlayer && unit && unit.owner !== gameState.currentPlayer && dist <= selectedUnit.range && !selectedUnit.hasAttacked && isTargetInFiringLine(selectedUnit, x, y);
+                const canMoveTo = commandable(selectedUnit) && !unit && (dist === 1) && selectedUnit.mp >= getTerrainMpCost(tile.terrain) && zocStatus.canPass;
+                const canAttack = commandable(selectedUnit) && unit && unit.owner !== gameState.currentPlayer && dist <= selectedUnit.range && !selectedUnit.hasAttacked && isTargetInFiringLine(selectedUnit, x, y);
 
                 const isDangerous = zocStatus.takesDamage;
 
@@ -2170,9 +2446,12 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
         onClose={() => setShowAiConfig(false)}
         aiConfigs={gameState.aiConfigs}
         nations={gameState.nations}
+        players={gameState.gameMode === 'versus' ? [VERSUS_AI_PLAYER] : [1, 2]}
         onSave={(configs) => {
           setGameState(prev => ({ ...prev, aiConfigs: configs }));
           setShowAiConfig(false);
+          // A turn that failed (for instance for want of a key) goes again with the new settings.
+          if (aiStalled) retryAiTurn();
         }}
       />
 
@@ -2239,6 +2518,22 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
                   </div>
                 </section>
 
+                {/* The latest AI dispatch lives here, off the map, so it never hides the troops. */}
+                {gameState.monologueHistory.length > 0 && (() => {
+                  const latest = gameState.monologueHistory[gameState.monologueHistory.length - 1];
+                  return (
+                    <section>
+                      <h2 className="flex items-center justify-between text-[11px] uppercase tracking-widest opacity-50 font-serif italic mb-4">
+                        <span>General {latest.player}'s Dispatch</span>
+                        <span className="not-italic font-mono text-[9px]">Turn {latest.turn}</span>
+                      </h2>
+                      <div className={cn("p-3 border-l-2 max-h-[38vh] overflow-y-auto custom-scrollbar", side(latest.player).archive)}>
+                        <Markdown text={latest.text} className="space-y-1.5 font-serif italic text-[11px] leading-relaxed text-[#141414]/85" />
+                      </div>
+                    </section>
+                  );
+                })()}
+
                 <section>
                   <button 
                     onClick={() => setIsArchiveOpen(!isArchiveOpen)}
@@ -2269,7 +2564,7 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
                                   <span>Turn {m.turn} - Player {m.player}</span>
                                   <span>{new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                                 </div>
-                                <p className="font-serif italic text-[#141414]/80">"{m.text}"</p>
+                                <Markdown text={m.text} className="space-y-1 font-serif italic text-[#141414]/80" />
                               </div>
                             ))
                           )}
@@ -2332,13 +2627,19 @@ IMPORTANT: You MUST end your turn with 'end' when you are satisfied or if you ha
                   </div>
                   <button 
                     onClick={() => {
+                      if (!humanTurn) return;
                       endTurn();
                       setCommandInput('');
                       setCommandError(null);
                     }}
-                    className="w-full py-6 bg-[#141414] text-[#E4E3E0] uppercase font-bold tracking-[0.2em] hover:bg-[#2a2a2a] transition-all flex items-center justify-center gap-3 group"
+                    disabled={!humanTurn}
+                    className="w-full py-6 bg-[#141414] text-[#E4E3E0] uppercase font-bold tracking-[0.2em] hover:bg-[#2a2a2a] disabled:opacity-40 disabled:hover:bg-[#141414] transition-all flex items-center justify-center gap-3 group"
                   >
-                    End Turn <ChevronRight size={20} className="group-hover:translate-x-1 transition-transform" />
+                    {humanTurn ? (
+                      <>End Turn <ChevronRight size={20} className="group-hover:translate-x-1 transition-transform" /></>
+                    ) : (
+                      <><Cpu size={18} /> AI's Turn</>
+                    )}
                   </button>
                 </section>
               </div>
