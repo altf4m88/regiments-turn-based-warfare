@@ -6,6 +6,7 @@ import { buildLeaderboard } from '../game/leaderboard';
 import { GameMode } from '../game/types';
 import { ARMY_COLOR } from './StrengthChart';
 import { ProviderIcon } from './ProviderIcon';
+import { AI_PROVIDERS } from '../ai/models';
 import { REASON_TEXT } from './BattleReport';
 
 const fmt = (n: number) => Math.round(n).toLocaleString('en-US');
@@ -20,8 +21,8 @@ const General = ({ who, sub = true, wrap = false }: { who: GeneralInfo; sub?: bo
     <span className={'block font-bold ' + (wrap ? 'break-words' : 'truncate')}>{who.kind === 'human' ? (who.label === 'You' ? 'You' : 'Human') : who.label}</span>
     {sub && (
       <span className="flex items-center gap-1 text-[9px] uppercase text-[#141414]/55">
-        <ProviderIcon provider={who.provider} size={10} />
-        {who.kind === 'human' ? 'Human player' : `AI · ${who.provider === 'claude' ? 'Claude' : who.provider === 'gemini' ? 'Gemini' : 'unknown provider'}`}
+        <ProviderIcon provider={who.provider} model={who.model} size={10} />
+        {who.kind === 'human' ? 'Human player' : `AI · ${who.provider ? AI_PROVIDERS[who.provider].label : 'unknown provider'}`}
       </span>
     )}
   </span>
@@ -293,7 +294,7 @@ export function RecordsView({ records, onChange, onClose, onPlayMap }: {
                           </span>
                           {armyOf(b, p) && <span className="block text-[9px] uppercase text-[#141414]/60">{armyOf(b, p)}</span>}
                           {b.sides[p].commander && <span className="block font-serif italic text-xs truncate max-w-[16rem]">{b.sides[p].commander}</span>}
-                          <span className="flex items-center gap-1 text-[#141414]/80 truncate max-w-[16rem]"><ProviderIcon provider={b.sides[p].who.provider} size={10} />{b.sides[p].general}</span>
+                          <span className="flex items-center gap-1 text-[#141414]/80 truncate max-w-[16rem]"><ProviderIcon provider={b.sides[p].who.provider} model={b.sides[p].who.model} size={10} />{b.sides[p].general}</span>
                           <span className="block text-[9px] text-[#141414]/55">lost {fmt(b.sides[p].lostMen)} men</span>
                         </td>
                       ))}

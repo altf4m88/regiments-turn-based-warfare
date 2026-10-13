@@ -109,7 +109,8 @@ export function BattleReport({ state, history, onRematch, onExport, onViewField,
   const reason = victoryReason(state);
   const sides = [1, 2].map(p => ({
     player: p, nation: nationOf(state, p), general: generalOf(state, p), commander: commanderOf(state, p), army: DOCTRINES[doctrineOf(state, p)].name,
-    provider: isAiPlayer(state, p) ? resolveAiModel(state.aiConfigs[p]).provider : undefined, s: sideStats(state, p),
+    provider: isAiPlayer(state, p) ? resolveAiModel(state.aiConfigs[p]).provider : undefined,
+    model: isAiPlayer(state, p) ? resolveAiModel(state.aiConfigs[p]).model : undefined, s: sideStats(state, p),
   }));
   const won = sides[winner - 1];
   const onThisMap = history.filter(b => b.seed === state.seed).slice(0, 8);
@@ -153,7 +154,7 @@ export function BattleReport({ state, history, onRematch, onExport, onViewField,
                     <span className="block font-serif italic text-base mt-0.5">{sd.commander}</span>
                     <span className="block text-[10px] font-mono uppercase text-[#141414]/80 mt-0.5">{sd.army}</span>
                     <span className="flex items-center gap-1 text-[10px] font-mono uppercase text-[#141414]/60 mt-0.5">
-                      <ProviderIcon provider={sd.provider} size={11} />
+                      <ProviderIcon provider={sd.provider} model={sd.model} size={11} />
                       Player {sd.player} · {sd.player === 1 ? 'south' : 'north'} · {sd.general}
                     </span>
                   </th>

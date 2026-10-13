@@ -1,5 +1,6 @@
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { ThinkingLevelSetting } from '../game/types';
+import { DEFAULT_THINKING_LEVEL } from './models';
 import { AiSession, AiSessionOptions } from './session';
 
 /** Our thinking level setting as the Gemini SDK's enum. */
@@ -16,7 +17,7 @@ export const startGeminiSession = ({ apiKey, model, thinkingLevel, systemInstruc
     model,
     config: {
       systemInstruction,
-      thinkingConfig: { thinkingLevel: GEMINI_THINKING[thinkingLevel] },
+      thinkingConfig: { thinkingLevel: GEMINI_THINKING[thinkingLevel ?? DEFAULT_THINKING_LEVEL] },
     },
   });
   return {

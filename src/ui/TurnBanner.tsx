@@ -60,7 +60,7 @@ export function TurnBanner({ state, compact = false }: { state: GameState; compa
         {ai ? (
           <>
             <span><span className="font-bold">{commander}</span> is thinking with {modelName(config)}</span>
-            <ProviderIcon provider={resolveAiModel(config).provider} size={compact ? 16 : 20} />
+            <ProviderIcon provider={resolveAiModel(config).provider} model={resolveAiModel(config).model} size={compact ? 16 : 20} />
           </>
         ) : (
           <span>

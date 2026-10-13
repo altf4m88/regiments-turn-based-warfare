@@ -31,7 +31,7 @@ export function DispatchBubble({ state, entry, minimized, onMinimize, onClose, c
   const nation = nationOf(state, entry.player);
   const commander = commanderOf(state, entry.player);
   const config = state.aiConfigs[entry.player];
-  const provider = config ? resolveAiModel(config).provider : undefined;
+  const ai = config ? resolveAiModel(config) : undefined;
   const unread = minimized && readAt < entry.timestamp;
   const long = plainText(entry.text).length > 180;
 
@@ -66,7 +66,7 @@ export function DispatchBubble({ state, entry, minimized, onMinimize, onClose, c
             <div className="flex-1 min-w-0 mb-1 leading-tight bg-white/90 px-2 py-1 shadow-sm">
               <p className={'font-serif italic font-bold text-sm truncate ' + NAME[nation]}>{commander}</p>
               <p className="flex items-center gap-1 text-[9px] font-mono uppercase text-[#141414]/70">
-                <ProviderIcon provider={provider} size={10} /> {config ? modelName(config) : 'AI general'} · turn {entry.turn}
+                <ProviderIcon provider={ai?.provider} model={ai?.model} size={10} /> {config ? modelName(config) : 'AI general'} · turn {entry.turn}
               </p>
             </div>
             <div className="flex gap-1 pb-1">

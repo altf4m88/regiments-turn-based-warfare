@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { DEFAULT_THINKING_LEVEL } from './models';
 import { AiSession, AiSessionOptions } from './session';
 
 /**
@@ -27,7 +28,7 @@ export const startClaudeSession = ({ apiKey, model, thinkingLevel, systemInstruc
         system: systemInstruction,
         // Thinking is always on for these models; the thinking level sets the effort.
         thinking: { type: 'adaptive' },
-        output_config: { effort: thinkingLevel },
+        output_config: { effort: thinkingLevel ?? DEFAULT_THINKING_LEVEL },
         messages: [...history, turn],
         ...(SERVER_FALLBACK.has(model) ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const } : {}),
       }).finalMessage();

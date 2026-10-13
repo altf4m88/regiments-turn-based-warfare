@@ -1,4 +1,4 @@
-import { describeModel, resolveAiModel } from '../ai/models';
+import { PROVIDERS, describeModel, resolveAiModel } from '../ai/models';
 import { DOCTRINES, RULES_VERSION, commanderOf, doctrineOf, isAiPlayer, isDoctrine, nationOf, sideStats, victoryReason, VictoryReason } from './engine';
 import { AiProvider, ArmyDoctrine, GameMode, GameState, Nation, ThinkingLevelSetting } from './types';
 
@@ -120,8 +120,8 @@ export const normalizeRecord = (raw: unknown): BattleRecord | null => {
       ? {
           kind: s.who.kind, label: str(s.who.label) || label,
           ...(s.who.kind === 'ai' ? {
-            provider: s.who.provider === 'claude' || s.who.provider === 'gemini' ? s.who.provider : undefined,
-            model: str(s.who.model) || undefined,
+            provider: PROVIDERS.includes(s.who.provider) ? s.who.provider : undefined,
+            model: str(s.who.model, 100) || undefined,
             thinking: ['low', 'medium', 'high'].includes(s.who.thinking) ? s.who.thinking : undefined,
           } : {}),
         }

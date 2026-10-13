@@ -24,7 +24,7 @@ An AI general gets a short briefing on how to fight with its army, and a note on
 
 Each AI dispatch appears as a speech bubble from its general over the top right of the map, beside the HUD: three lines at first, **Read full dispatch** for the rest. **−** minimises it to a tab (remembered, with a dot when a new dispatch arrives) and **×** closes it until the next one. The last dispatch stays up during your turn so you can read it; every dispatch is kept in the HUD's *Strategic Archive*.
 
-AI generals play **in character**: each knows its own name and its opponent's, and writes its dispatches in the voice of its army, a French marshal with the odd *Mon Dieu !* or *En avant !*, a British general with a dry *Steady, lads!*. The persona only colours the dispatches; orders are the same commands. Each general has an *In character* switch in AI settings; turn it off to send the neutral prompts, for example when comparing models. The Claude and Gemini logos come from [Simple Icons](https://simpleicons.org) (see `src/assets/providers/`).
+AI generals play **in character**: each knows its own name and its opponent's, and writes its dispatches in the voice of its army, a French marshal with the odd *Mon Dieu !* or *En avant !*, a British general with a dry *Steady, lads!*. The persona only colours the dispatches; orders are the same commands. Each general has an *In character* switch in AI settings; turn it off to send the neutral prompts, for example when comparing models. The Claude and Gemini logos come from [Simple Icons](https://simpleicons.org), and the OpenAI, OpenRouter and model makers' logos from [Lobe Icons](https://github.com/lobehub/lobe-icons) (see `src/assets/providers/`).
 
 **On a phone or tablet.** On a narrow screen, or a phone held sideways, the header shrinks to one line (view, AI settings and abandon move into its ⋮ menu). The Intel and HUD panels slide over the map from a command bar at the bottom, which also carries the selected regiment's orders (turn, entrench, square, palisade) and End Turn. In 3D, drag to pan, pinch to zoom, twist with two fingers to rotate, and double-tap to focus.
 
@@ -48,16 +48,20 @@ Records only compare battles fought under the current rules (`RULES_VERSION` in 
 **Pause AI** in the header stops the AI generals once the current turn ends. If an AI general's turn fails, for example because of a missing key, an API error or a rate limit, the battle waits for you: **Retry AI turn** runs it again from where it stopped, and so does saving new settings in *AI Settings*.
 
 # AI Generals
-In *AI Settings*, each AI player's general runs on **Gemini** (Google) or **Claude** (Anthropic), so you can pit one against the other:
+In *AI Settings*, each AI player's general runs on **Gemini** (Google), **Claude** (Anthropic), **GPT** (OpenAI), or one of many models on **OpenRouter**, so you can pit any of them against another:
 
 | Provider | Models | Key |
 | :--- | :--- | :--- |
 | Gemini | Gemini 3.8 Flash (`gemini-3.8-flash`) | [Google AI Studio](https://aistudio.google.com), or Vertex AI |
 | Claude | Claude Sonnet 5.5 (`claude-sonnet-5-5`, default), Claude Opus 5.5 (strongest), Claude Haiku 5.5 (fastest and cheapest) | [Claude Platform](https://platform.claude.com) |
+| OpenAI | GPT-6.1 Sol (`gpt-6.1-sol`, default), GPT-6 Astra (strongest), GPT-6 Luna (fastest and cheapest) | [OpenAI Platform](https://platform.openai.com) |
+| OpenRouter | GLM 5.3 (`z-ai/glm-5.3`, default), Llama 4 Maverick, Muse Spark 1.3, Gemma 4 31B, DeepSeek V4 Pro, Qwen3.8 Max, Kimi K3, Mistral Large 4, gpt-oss-120b, Nemotron 3 Ultra, Grok 4.7, MiniMax M3, or any other model by its OpenRouter ID | [OpenRouter](https://openrouter.ai/keys) |
 
-Each player also picks a thinking level: Low, Medium (the default) or High. It is sent as Gemini's thinking level, which Gemini 3.8 Flash requires, or as Claude's effort. Higher levels plan more carefully, but turns take longer and cost more.
+Each player also picks a thinking level: Low, Medium (the default) or High. It is sent as Gemini's thinking level, which Gemini 3.8 Flash requires, as Claude's effort, or as the reasoning effort of GPT and OpenRouter models. Higher levels plan more carefully, but turns take longer and cost more. Some OpenRouter models take only some levels (GLM 5.3 offers Low and High), and the menu shows just those; Gemma 4 and MiniMax M3 reason with no levels to choose, and Llama 4 Maverick does not reason.
 
-Requests go straight from the browser to Google or Anthropic, using the player's own key. Because the key sits in the browser, use a dedicated key with a spending limit. On Claude, the game caches the instructions and the turn so far between a turn's requests. If Claude Sonnet 5.5 or Opus 5.5 declines a request, Anthropic's server-side fallback tries another model in the same call. A general whose request is still declined ends its turn, and the battle log says why.
+Requests go straight from the browser to Google, Anthropic, OpenAI or OpenRouter, using the player's own key. Because the key sits in the browser, use a dedicated key with a spending limit. On Claude, the game caches the instructions and the turn so far between a turn's requests. If Claude Sonnet 5.5 or Opus 5.5 declines a request, Anthropic's server-side fallback tries another model in the same call. A general whose request is still declined ends its turn, and the battle log says why.
+
+GPT generals use OpenAI's Responses API with nothing stored at OpenAI (`store: false`): the game resends the turn so far with the model's encrypted reasoning, so each reply in a turn builds on the reasoning before it, as Claude's does. OpenRouter generals use its Chat Completions API and pass back the reasoning blocks the model returns. The OpenRouter list is a selection of capable models from several makers, most with open weights; pick *Another OpenRouter model…* to type any ID from [openrouter.ai/models](https://openrouter.ai/models), such as a `:free` variant. Smaller models may struggle to give valid orders. In the banner, the records and the leaderboard, an OpenRouter general shows its maker's logo (Meta, Z.ai, Gemma…) rather than OpenRouter's. Which providers serve a model, and what they do with your prompts, follows your OpenRouter account settings.
 
 
 # 3D Battlefield
@@ -113,7 +117,7 @@ Regiments is a static single-page app, so it deploys as a small nginx container 
 - `deploy/nginx.conf.template`: SPA fallback, gzip, long-lived caching for fingerprinted `/assets`, and no caching for `index.html`.
 - `cloudbuild.yaml`: build → push to Artifact Registry → deploy to Cloud Run, for continuous deployment.
 
-**API keys stay in the browser.** Players type their Gemini, Claude and LangSmith keys into *AI Settings*, and the deployed site never sees them. Don't put keys in a `.env` for the build: Vite inlines `define`d variables into the public JavaScript. `.dockerignore` keeps `.env*` files out of the image anyway.
+**API keys stay in the browser.** Players type their Gemini, Claude, OpenAI, OpenRouter and LangSmith keys into *AI Settings*, and the deployed site never sees them. Don't put keys in a `.env` for the build: Vite inlines `define`d variables into the public JavaScript. `.dockerignore` keeps `.env*` files out of the image anyway.
 
 ### One-time setup
 ```bash

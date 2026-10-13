@@ -53,9 +53,9 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
 import { Client } from "langsmith";
-import { Regiment, Tile, GameState, GameMode, UnitType, Facing, GameAnimation, AiConfig, AiProvider, Nation, ThinkingLevelSetting, ArmyDoctrine } from './game/types';
+import { Regiment, Tile, GameState, GameMode, UnitType, Facing, GameAnimation, AiConfig, Nation, ThinkingLevelSetting, ArmyDoctrine } from './game/types';
 import { getInitialState, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath, resolveAttack, nextRegimentId, parseUnitType, NATIONS, nationOf, nationsFor, isAiPlayer, aiPlayerOf, humanPlayerOf, VERSUS_AI_PLAYER, idleRegiments, describeIdle, COMMANDERS, DEFAULT_COMMANDERS, normalizeCommander, commanderOf, DOCTRINES, doctrineOf, isDoctrine, bumpTally, snapshot, sideStats, victoryReason, randomSeed, normalizeSeed } from './game/engine';
-import { AI_MODELS, AI_PROVIDERS, THINKING_LEVELS, describeModel, modelName, resolveAiModel } from './ai/models';
+import { AI_MODELS, AI_PROVIDERS, PROVIDERS, THINKING_LEVELS, describeModel, isOpenRouterId, keyPatch, modelPatch, resolveAiModel, thinkingLevelsFor } from './ai/models';
 import { AiSession, startAiSession } from './ai/session';
 import { Markdown, plainText } from './ui/Markdown';
 import { BattleReport, CasualtyPanel, MapPreview } from './ui/BattleReport';
@@ -74,6 +74,9 @@ import { ProviderIcon } from './ui/ProviderIcon';
 const BattlefieldView = lazy(() => import('./three/BattlefieldView'));
 
 /** Team colours follow the army: British red, French blue. Literal class names so Tailwind keeps them. */
+/** The model menu's entry for typing in any OpenRouter model ID. */
+const CUSTOM_MODEL = '__custom';
+
 const SIDE_UI: Record<Nation, {
   text: string; textSoft: string; bubble: string; chip: string; unit: string;
   ring40: string; ring60: string; ring80: string; archive: string; pick: string;
@@ -316,6 +319,7 @@ const AiConfigModal = ({
 }) => {
   const versus = players.length === 1;
   const [localConfigs, setLocalConfigs] = useState(aiConfigs);
+  const [customOpen, setCustomOpen] = useState<{ [player: number]: boolean }>({});
 
   if (!isOpen) return null;
 
@@ -358,6 +362,9 @@ const AiConfigModal = ({
             const config = localConfigs[playerNum];
             const ai = resolveAiModel(config);
             const update = (patch: Partial<AiConfig>) => setLocalConfigs(prev => ({ ...prev, [playerNum]: { ...prev[playerNum], ...patch } }));
+            // An OpenRouter model typed in rather than picked from the list.
+            const customModel = ai.provider === 'openrouter' && (customOpen[playerNum] || (!!config.openrouterModel && !AI_MODELS.openrouter.some(m => m.id === config.openrouterModel)));
+            const levels = thinkingLevelsFor(ai.info);
             return (
             <div key={playerNum} className="space-y-4 p-4 border border-[#141414]/20 bg-white/50">
               <h3 className={cn("font-bold uppercase text-sm border-b border-[#141414] pb-2", SIDE_UI[nations[playerNum]].text)}>
@@ -369,7 +376,7 @@ const AiConfigModal = ({
               <div className="space-y-1">
                 <label className="text-[10px] uppercase font-bold opacity-60">AI Provider</label>
                 <div className="grid grid-cols-2 border border-[#141414]" role="radiogroup" aria-label={`Player ${playerNum}'s AI provider`}>
-                  {(['gemini', 'claude'] as AiProvider[]).map(p => (
+                  {PROVIDERS.map(p => (
                     <button
                       key={p}
                       role="radio"
@@ -381,7 +388,7 @@ const AiConfigModal = ({
                       )}
                     >
                       <span className="flex items-center gap-1.5 text-xs font-bold uppercase"><ProviderIcon provider={p} size={14} /> {AI_PROVIDERS[p].label}</span>
-                      <span className="block text-[9px] font-mono uppercase opacity-60">{AI_PROVIDERS[p].vendor}</span>
+                      <span className="block text-[9px] font-mono uppercase opacity-60 truncate">{AI_PROVIDERS[p].vendor}</span>
                     </button>
                   ))}
                 </div>
@@ -392,7 +399,7 @@ const AiConfigModal = ({
                 <input 
                   type="password"
                   value={ai.apiKey}
-                  onChange={(e) => update(ai.provider === 'claude' ? { claudeApiKey: e.target.value } : { apiKey: e.target.value })}
+                  onChange={(e) => update(keyPatch(ai.provider, e.target.value))}
                   placeholder={AI_PROVIDERS[ai.provider].keyPlaceholder}
                   className="w-full p-2 bg-white border border-[#141414] font-mono text-xs focus:ring-1 focus:ring-[#141414] outline-none"
                 />
@@ -438,29 +445,62 @@ const AiConfigModal = ({
               )}
 
               <div className="space-y-1">
-                <label className="text-[10px] uppercase font-bold opacity-60">Model Selection</label>
-                <select 
-                  value={ai.model}
-                  onChange={(e) => update(ai.provider === 'claude' ? { claudeModel: e.target.value } : { model: e.target.value })}
+                <label htmlFor={`model-${playerNum}`} className="text-[10px] uppercase font-bold opacity-60">Model Selection</label>
+                <select
+                  id={`model-${playerNum}`}
+                  value={customModel ? CUSTOM_MODEL : ai.model}
+                  onChange={(e) => {
+                    const custom = e.target.value === CUSTOM_MODEL;
+                    setCustomOpen(prev => ({ ...prev, [playerNum]: custom }));
+                    update(modelPatch(ai.provider, custom ? '' : e.target.value));
+                  }}
                   className="w-full p-2 bg-white border border-[#141414] font-mono text-xs focus:ring-1 focus:ring-[#141414] outline-none"
                 >
                   {AI_MODELS[ai.provider].map(m => (
                     <option key={m.id} value={m.id}>{m.label}</option>
                   ))}
+                  {ai.provider === 'openrouter' && <option value={CUSTOM_MODEL}>Another OpenRouter model…</option>}
                 </select>
+                {customModel && (
+                  <>
+                    <input
+                      type="text"
+                      value={config.openrouterModel ?? ''}
+                      onChange={(e) => update(modelPatch('openrouter', e.target.value.trim()))}
+                      placeholder="maker/model, e.g. qwen/qwen3.8-flash"
+                      spellCheck={false}
+                      aria-label="OpenRouter model ID"
+                      className="w-full p-2 bg-white border border-[#141414] font-mono text-xs focus:ring-1 focus:ring-[#141414] outline-none"
+                    />
+                    <p className="text-[9px] font-mono opacity-60 leading-snug">
+                      {config.openrouterModel && !isOpenRouterId(config.openrouterModel)
+                        ? `Not a model ID; the general will use ${AI_MODELS.openrouter[0].label.replace(/ \(.*\)$/, '')}.`
+                        : 'Any model ID from openrouter.ai/models. Smaller models may struggle to give valid orders.'}
+                    </p>
+                  </>
+                )}
               </div>
 
               <div className="space-y-1">
-                <label className="text-[10px] uppercase font-bold opacity-60">Thinking Level</label>
-                <select
-                  value={ai.thinkingLevel}
-                  onChange={(e) => update({ thinkingLevel: e.target.value as ThinkingLevelSetting })}
-                  className="w-full p-2 bg-white border border-[#141414] font-mono text-xs focus:ring-1 focus:ring-[#141414] outline-none"
-                >
-                  {THINKING_LEVELS.map(l => (
-                    <option key={l.id} value={l.id}>{l.label}: {l.hint}</option>
-                  ))}
-                </select>
+                <label htmlFor={`thinking-${playerNum}`} className="text-[10px] uppercase font-bold opacity-60">Thinking Level</label>
+                {levels.length > 1 ? (
+                  <select
+                    id={`thinking-${playerNum}`}
+                    value={ai.thinkingLevel}
+                    onChange={(e) => update({ thinkingLevel: e.target.value as ThinkingLevelSetting })}
+                    className="w-full p-2 bg-white border border-[#141414] font-mono text-xs focus:ring-1 focus:ring-[#141414] outline-none"
+                  >
+                    {THINKING_LEVELS.filter(l => levels.includes(l.id)).map(l => (
+                      <option key={l.id} value={l.id}>{l.label}: {l.hint}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <p id={`thinking-${playerNum}`} className="p-2 border border-[#141414]/30 font-mono text-xs text-[#141414]/70">
+                    {levels.length === 1 ? `${THINKING_LEVELS.find(l => l.id === levels[0])!.label}: the only level this model offers`
+                      : ai.info.reasoning === 'none' ? 'None: this model answers without reasoning'
+                      : 'Built in: this model reasons, with no levels to choose'}
+                  </p>
+                )}
               </div>
 
               <label className="flex items-start gap-2 cursor-pointer">
@@ -510,10 +550,10 @@ const AiConfigModal = ({
         </div>
 
         <div className="text-[10px] uppercase opacity-50 font-mono leading-relaxed">
-          * Your API keys are kept in memory only and never saved to any server; requests go straight from this browser to Google or Anthropic.
+          * Your API keys are kept in memory only and never saved to any server; requests go straight from this browser to Google, Anthropic, OpenAI or OpenRouter.
           {versus
             ? ` You command Player ${3 - players[0]} (${NATIONS[nations[3 - players[0]]].adjective}); this general commands the enemy army.`
-            : ' Pit Gemini against Claude, or give each side a different model or thinking level, to see how they compete tactically.'}
+            : ' Pit Gemini, Claude, GPT and open models such as Llama, GLM or Gemma against each other, or give each side a different model or thinking level, to see how they compete tactically.'}
         </div>
 
         <div className="flex gap-4 mt-4">
@@ -1936,7 +1976,8 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
       if (session?.isRateLimit(error)) {
         addBattlefieldLog(`CRITICAL: AI Player ${gameState.currentPlayer} hit API rate limits. Please wait a minute before trying again or use a paid API key.`);
       } else {
-        addBattlefieldLog("AI encountered an error during its turn.");
+        const why = session?.explain?.(error);
+        addBattlefieldLog(why ? `AI encountered an error during its turn: ${why}` : "AI encountered an error during its turn.");
       }
       
       // Update LangSmith parent run with error
@@ -2236,7 +2277,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
             </p>
             <p className="text-[9px] font-mono uppercase opacity-70 whitespace-nowrap flex items-center gap-1">
               {!humanTurn
-                ? <><ProviderIcon provider={resolveAiModel(gameState.aiConfigs[gameState.currentPlayer]).provider} size={10} className={isAiThinking ? 'animate-pulse' : ''} /> {describeModel(gameState.aiConfigs[gameState.currentPlayer])}</>
+                ? <><ProviderIcon provider={resolveAiModel(gameState.aiConfigs[gameState.currentPlayer]).provider} model={resolveAiModel(gameState.aiConfigs[gameState.currentPlayer]).model} size={10} className={isAiThinking ? 'animate-pulse' : ''} /> {describeModel(gameState.aiConfigs[gameState.currentPlayer])}</>
                 : `P${gameState.currentPlayer} · ${NATIONS[nationOf(gameState, gameState.currentPlayer)].adjective}${gameState.gameMode === 'versus' ? ' · your command' : ''}`}
             </p>
           </div>
@@ -2394,7 +2435,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
               const ai = resolveAiModel(gameState.aiConfigs[gameState.currentPlayer]);
               return (
                 <p className="text-[9px] uppercase font-mono tracking-wider opacity-70 flex items-center justify-end gap-1 whitespace-nowrap">
-                  <ProviderIcon provider={ai.provider} size={12} /> {modelName(gameState.aiConfigs[gameState.currentPlayer])} · {ai.thinkingLevel}
+                  <ProviderIcon provider={ai.provider} model={ai.model} size={12} /> {describeModel(gameState.aiConfigs[gameState.currentPlayer])}
                 </p>
               );
             })()}

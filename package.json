@@ -21,6 +21,7 @@
     "langsmith": "^0.5.14",
     "lucide-react": "^0.546.0",
     "motion": "^12.38.0",
+    "openai": "^7.25.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tailwind-merge": "^3.5.0",

@@ -463,8 +463,8 @@ export const getInitialState = (
     cliHistory: [],
     gameMode: null,
     aiConfigs: {
-      1: { provider: 'gemini', apiKey: '', model: DEFAULT_MODELS.gemini, claudeApiKey: '', claudeModel: DEFAULT_MODELS.claude, thinkingLevel: DEFAULT_THINKING_LEVEL, langsmithApiKey: '', langsmithProject: 'regiments-p1' },
-      2: { provider: 'gemini', apiKey: '', model: DEFAULT_MODELS.gemini, claudeApiKey: '', claudeModel: DEFAULT_MODELS.claude, thinkingLevel: DEFAULT_THINKING_LEVEL, langsmithApiKey: '', langsmithProject: 'regiments-p2' }
+      1: { provider: 'gemini', apiKey: '', model: DEFAULT_MODELS.gemini, claudeApiKey: '', claudeModel: DEFAULT_MODELS.claude, openaiApiKey: '', openaiModel: DEFAULT_MODELS.openai, openrouterApiKey: '', openrouterModel: DEFAULT_MODELS.openrouter, thinkingLevel: DEFAULT_THINKING_LEVEL, langsmithApiKey: '', langsmithProject: 'regiments-p1' },
+      2: { provider: 'gemini', apiKey: '', model: DEFAULT_MODELS.gemini, claudeApiKey: '', claudeModel: DEFAULT_MODELS.claude, openaiApiKey: '', openaiModel: DEFAULT_MODELS.openai, openrouterApiKey: '', openrouterModel: DEFAULT_MODELS.openrouter, thinkingLevel: DEFAULT_THINKING_LEVEL, langsmithApiKey: '', langsmithProject: 'regiments-p2' }
     },
     monologueHistory: [],
     nations: { ...nations },
