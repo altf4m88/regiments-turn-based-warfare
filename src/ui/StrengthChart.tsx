@@ -1,11 +1,11 @@
-import { KeyboardEvent, PointerEvent, useMemo, useRef, useState } from 'react';
+import { KeyboardEvent, PointerEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { NATIONS, nationOf, snapshot } from '../game/engine';
 import { GameState, Nation, TurnSnapshot } from '../game/types';
 
 /** Army colours (the same red and blue as the map), checked for colour-blind separation on white. */
 export const ARMY_COLOR: Record<Nation, string> = { british: '#dc2626', french: '#2563eb' };
 
-const W = 560, H = 210;
+const H = 210;
 const M = { left: 44, right: 58, top: 14, bottom: 26 };
 const fmt = (n: number) => n.toLocaleString('en-US');
 const compact = (n: number) => (n >= 1000 ? `${+(n / 1000).toFixed(n % 1000 ? 1 : 0)}K` : String(n));
@@ -30,6 +30,16 @@ export function StrengthChart({ state }: { state: GameState }) {
 
   const [active, setActive] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  // Drawn at the width it is shown, so text stays legible on a phone instead of shrinking with the chart.
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [W, setW] = useState(560);
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(([e]) => setW(Math.max(280, Math.round(e.contentRect.width))));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [points.length < 2]);
 
   const n = points.length;
   const peak = Math.max(1, ...points.flatMap(p => [p.men[1], p.men[2]]));
@@ -80,7 +90,7 @@ export function StrengthChart({ state }: { state: GameState }) {
           </span>
         ))}
       </div>
-      <div className="relative">
+      <div className="relative" ref={boxRef}>
         <svg
           ref={svgRef}
           viewBox={`0 0 ${W} ${H}`}
@@ -125,7 +135,8 @@ export function StrengthChart({ state }: { state: GameState }) {
         {cur && (
           <div
             className="absolute top-1 pointer-events-none bg-white border border-[#141414]/20 shadow-md px-2.5 py-1.5 text-[10px] font-mono"
-            style={x(active!) > W / 2 ? { right: `${((W - x(active!)) / W) * 100 + 2}%` } : { left: `${(x(active!) / W) * 100 + 2}%` }}
+            // Beside the crosshair, on whichever side has room, and never past the chart's edges.
+            style={{ left: x(active!) > W / 2 ? Math.max(0, x(active!) - 222) : Math.min(W - 214, x(active!) + 10), width: 212 }}
           >
             <div className="uppercase text-[#141414]/55 mb-1 whitespace-nowrap">{cur.label}</div>
             {sides.map(s => (

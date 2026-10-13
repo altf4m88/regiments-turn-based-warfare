@@ -121,23 +121,23 @@ export function BattleReport({ state, history, onRematch, onExport, onViewField,
   ];
 
   return (
-    <div className="absolute inset-0 z-50 overflow-y-auto bg-[#141414]/85 backdrop-blur-sm p-4 sm:p-8">
+    <div className="fixed inset-0 z-[95] overflow-y-auto bg-[#141414]/85 backdrop-blur-sm p-2 sm:p-8">
       <div className="max-w-3xl mx-auto bg-[#E4E3E0] border-2 border-[#141414] shadow-2xl">
-        <header className="p-6 border-b border-[#141414]">
+        <header className="p-4 sm:p-6 border-b border-[#141414]">
           <p className="text-[10px] uppercase tracking-[0.25em] font-mono text-[#141414]/60">
             Battle report · {MODE_LABEL[state.gameMode ?? 'manual']} · Map <span className="font-bold text-[#141414]">{state.seed}</span>
           </p>
-          <h2 className="mt-2 text-4xl font-serif italic font-bold tracking-tight">The {NATIONS[won.nation].adjective} carry the field</h2>
+          <h2 className="mt-2 text-3xl sm:text-4xl font-serif italic font-bold tracking-tight">The {NATIONS[won.nation].adjective} carry the field</h2>
           <p className="mt-2 text-sm">
             Player {winner} ({won.general}) {reason ? REASON_TEXT[reason] : 'won'} on turn {state.turn}.
           </p>
         </header>
 
-        <section className="p-6 border-b border-[#141414]/20">
+        <section className="p-4 sm:p-6 border-b border-[#141414]/20">
           <table className="w-full text-xs">
             <thead>
               <tr>
-                <th className="w-2/5" />
+                <th className="w-1/3 sm:w-2/5" />
                 {sides.map(sd => (
                   <th key={sd.player} className="text-left font-normal pb-3 pl-3 align-bottom">
                     <span className="flex items-center gap-1.5 text-sm font-bold uppercase">
@@ -162,12 +162,12 @@ export function BattleReport({ state, history, onRematch, onExport, onViewField,
           </table>
         </section>
 
-        <section className="p-6 border-b border-[#141414]/20 bg-white">
+        <section className="p-4 sm:p-6 border-b border-[#141414]/20 bg-white">
           <h3 className="text-[11px] uppercase tracking-widest font-serif italic text-[#141414]/60 mb-3">Men under arms, turn by turn</h3>
           <StrengthChart state={state} />
         </section>
 
-        <section className="p-6 border-b border-[#141414]/20">
+        <section className="p-4 sm:p-6 border-b border-[#141414]/20">
           <h3 className="text-[11px] uppercase tracking-widest font-serif italic text-[#141414]/60 mb-3">Battles on map {state.seed}</h3>
           {onThisMap.length > 1 ? (
             <div className="overflow-x-auto">
@@ -206,7 +206,7 @@ export function BattleReport({ state, history, onRematch, onExport, onViewField,
           )}
         </section>
 
-        <footer className="p-6 flex flex-wrap gap-2">
+        <footer className="p-4 sm:p-6 flex flex-wrap gap-2">
           <button onClick={() => onRematch(true)} className="px-4 py-2.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 hover:bg-[#2a2a2a]" title="Same map; each general takes the other army's starting position and turn order">
             <Shuffle size={14} /> Rematch, swap sides
           </button>

@@ -10,6 +10,8 @@ interface Props {
   gameState: GameState;
   mapRotation: number;
   aiMode: boolean;
+  /** Phone-sized layout: icon-only toolbar, a smaller minimap and banner. */
+  compact?: boolean;
   onTileClick: (x: number, y: number) => void;
   onTileHover: (tile: Tile | null) => void;
 }
@@ -55,22 +57,27 @@ const loadOpts = (aiMode: boolean): BattlefieldOptions => {
   return base;
 };
 
-const ToolButton = ({ on, onClick, title, children }: { on?: boolean; onClick: () => void; title: string; children: React.ReactNode }) => (
+const ToolButton = ({ on, onClick, title, icon, label, compact }: {
+  on?: boolean; onClick: () => void; title: string; icon: React.ReactNode; label: string; compact?: boolean;
+}) => (
   <button
     onClick={onClick}
     title={title}
+    aria-label={compact ? title : undefined}
+    aria-pressed={on}
     className={
-      'h-8 px-2 flex items-center gap-1.5 border border-[#141414] text-[10px] uppercase font-bold tracking-tight transition-colors ' +
+      'flex items-center gap-1.5 border border-[#141414] text-[10px] uppercase font-bold tracking-tight transition-colors ' +
+      (compact ? 'h-9 w-9 justify-center ' : 'h-8 px-2 ') +
       (on ? 'bg-[#141414] text-[#E4E3E0]' : 'bg-[#E4E3E0]/90 hover:bg-[#141414] hover:text-[#E4E3E0]')
     }
   >
-    {children}
+    {icon}{!compact && ` ${label}`}
   </button>
 );
 
-const Minimap = ({ state, view, onPick }: { state: GameState; view: CameraView | null; onPick: (x: number, z: number) => void }) => {
+const Minimap = ({ state, view, onPick, size = 156 }: { state: GameState; view: CameraView | null; onPick: (x: number, z: number) => void; size?: number }) => {
   const ref = useRef<HTMLCanvasElement>(null);
-  const SIZE = 156;
+  const SIZE = size;
   const s = SIZE / MAP_N;
   useEffect(() => {
     const c = ref.current;
@@ -107,7 +114,7 @@ const Minimap = ({ state, view, onPick }: { state: GameState; view: CameraView |
       g.fillStyle = '#fff';
       g.fillRect(view.target.x * k - 1.5, view.target.z * k - 1.5, 3, 3);
     }
-  }, [state, view, s]);
+  }, [state, view, s, SIZE]);
   const pick = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
     onPick(((e.clientX - r.left) / r.width) * MAP_N * TILE, ((e.clientY - r.top) / r.height) * MAP_N * TILE);
@@ -125,7 +132,7 @@ const Minimap = ({ state, view, onPick }: { state: GameState; view: CameraView |
   );
 };
 
-export default function BattlefieldView({ gameState, mapRotation, aiMode, onTileClick, onTileHover }: Props) {
+export default function BattlefieldView({ gameState, mapRotation, aiMode, compact = false, onTileClick, onTileHover }: Props) {
   const mountRef = useRef<HTMLDivElement>(null);
   const bfRef = useRef<Battlefield | null>(null);
   const clickRef = useRef(onTileClick);
@@ -139,6 +146,8 @@ export default function BattlefieldView({ gameState, mapRotation, aiMode, onTile
   const [hover, setHover] = useState<{ info: HoverInfo; screen: { x: number; y: number } } | null>(null);
   const [view, setView] = useState<CameraView | null>(null);
   const [showHelp, setShowHelp] = useState(true);
+  // Touch screens get tap and pinch wording in the help.
+  const touch = useMemo(() => typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches, []);
   const [failed, setFailed] = useState<string | null>(null);
   const [banner, setBanner] = useState<{ key: number; turn: number; player: number } | null>(null);
   const lastTurnRef = useRef<string | null>(null);
@@ -232,12 +241,12 @@ export default function BattlefieldView({ gameState, mapRotation, aiMode, onTile
 
       {/* Toolbar */}
       <div className="absolute top-3 left-3 flex flex-wrap gap-1 z-10 max-w-[calc(100%-1.5rem)]">
-        <ToolButton on={opts.labels} onClick={() => toggle('labels')} title="Regiment labels"><Tag size={12} /> Labels</ToolButton>
-        <ToolButton on={opts.grid} onClick={() => toggle('grid')} title="Tile grid"><Grid3x3 size={12} /> Grid</ToolButton>
-        <ToolButton on={opts.follow} onClick={() => toggle('follow')} title="Camera follows the action"><Video size={12} /> Follow</ToolButton>
-        <ToolButton on={opts.sound} onClick={() => toggle('sound')} title="Battle sounds">{opts.sound ? <Volume2 size={12} /> : <VolumeX size={12} />} Sound</ToolButton>
-        <ToolButton on={opts.quality === 'high'} onClick={() => setOpts(o => ({ ...o, quality: o.quality === 'high' ? 'low' : 'high' }))} title="Shadows and full-resolution rendering"><Sparkles size={12} /> {opts.quality === 'high' ? 'High' : 'Low'}</ToolButton>
-        <ToolButton onClick={() => bfRef.current?.overview()} title="Overview (Home)"><MapIcon size={12} /> Overview</ToolButton>
+        <ToolButton compact={compact} on={opts.labels} onClick={() => toggle('labels')} title="Regiment labels" icon={<Tag size={compact ? 14 : 12} />} label="Labels" />
+        <ToolButton compact={compact} on={opts.grid} onClick={() => toggle('grid')} title="Tile grid" icon={<Grid3x3 size={compact ? 14 : 12} />} label="Grid" />
+        <ToolButton compact={compact} on={opts.follow} onClick={() => toggle('follow')} title="Camera follows the action" icon={<Video size={compact ? 14 : 12} />} label="Follow" />
+        <ToolButton compact={compact} on={opts.sound} onClick={() => toggle('sound')} title="Battle sounds" icon={opts.sound ? <Volume2 size={compact ? 14 : 12} /> : <VolumeX size={compact ? 14 : 12} />} label="Sound" />
+        <ToolButton compact={compact} on={opts.quality === 'high'} onClick={() => setOpts(o => ({ ...o, quality: o.quality === 'high' ? 'low' : 'high' }))} title="Shadows and full-resolution rendering" icon={<Sparkles size={compact ? 14 : 12} />} label={opts.quality === 'high' ? 'High' : 'Low'} />
+        <ToolButton compact={compact} onClick={() => bfRef.current?.overview()} title="Overview (Home)" icon={<MapIcon size={compact ? 14 : 12} />} label="Overview" />
         {gameState.selectedUnitId && (
           <ToolButton
             onClick={() => {
@@ -245,15 +254,16 @@ export default function BattlefieldView({ gameState, mapRotation, aiMode, onTile
               if (u) bfRef.current?.focusTile(u.x, u.y);
             }}
             title="Focus selected regiment (F)"
-          >
-            <Crosshair size={12} /> Focus
-          </ToolButton>
+            compact={compact}
+            icon={<Crosshair size={compact ? 14 : 12} />}
+            label="Focus"
+          />
         )}
       </div>
 
       {/* Minimap */}
-      <div className="absolute bottom-3 left-3 z-10 border-2 border-[#141414] bg-[#141414] shadow-xl">
-        <Minimap state={gameState} view={view} onPick={(x, z) => bfRef.current?.focusWorld(x, z)} />
+      <div className={'absolute z-10 border-2 border-[#141414] bg-[#141414] shadow-xl ' + (compact ? 'bottom-2 left-2' : 'bottom-3 left-3')}>
+        <Minimap state={gameState} view={view} size={compact ? 92 : 156} onPick={(x, z) => bfRef.current?.focusWorld(x, z)} />
         <div className="flex justify-between px-1.5 py-0.5 text-[8px] font-mono uppercase text-[#E4E3E0]/70">
           <span>Turn {gameState.turn}</span>
           <span className={ARMY[nationOf(gameState, gameState.currentPlayer)].light}>P{gameState.currentPlayer} to move</span>
@@ -263,20 +273,25 @@ export default function BattlefieldView({ gameState, mapRotation, aiMode, onTile
       {/* Controls help */}
       <div
         className={
-          'absolute bottom-3 left-[180px] z-10 bg-[#141414]/85 text-[#E4E3E0] px-3 py-2 text-[9px] font-mono uppercase leading-relaxed transition-opacity duration-700 pointer-events-none hidden md:block ' +
+          'absolute z-10 bg-[#141414]/85 text-[#E4E3E0] px-3 py-2 text-[9px] font-mono uppercase leading-relaxed transition-opacity duration-700 pointer-events-none ' +
+          (compact ? 'bottom-2 left-[110px] right-2 max-w-sm ' : 'bottom-3 left-[180px] hidden md:block ') +
           (showHelp ? 'opacity-100' : 'opacity-0')
         }
       >
         <div className="flex items-center gap-1 opacity-60 mb-0.5"><Eye size={10} /> Field glass</div>
-        Click: select / move / attack · Drag: pan · Right-drag: rotate<br />
-        Wheel: zoom · WASD: pan · Q/E: rotate · Dbl-click / F: focus · Home: overview
+        {touch ? (
+          <>Tap: select / march / engage · Drag: pan<br />Pinch: zoom · Two-finger twist: rotate · Double-tap: focus</>
+        ) : (
+          <>Click: select / move / attack · Drag: pan · Right-drag: rotate<br />
+          Wheel: zoom · WASD: pan · Q/E: rotate · Dbl-click / F: focus · Home: overview</>
+        )}
       </div>
 
       {/* Turn banner */}
       {banner && (
         <div key={banner.key} className="bf-turn-banner absolute left-1/2 top-[18%] z-20 pointer-events-none text-center">
           <div className="text-[10px] font-mono uppercase tracking-[0.4em] text-[#E4E3E0]/80">Turn {banner.turn}</div>
-          <div className={'text-4xl font-serif italic font-bold tracking-tight ' + ARMY[nationOf(gameState, banner.player)].banner}>
+          <div className={(compact ? 'text-2xl ' : 'text-4xl ') + 'font-serif italic font-bold tracking-tight whitespace-nowrap ' + ARMY[nationOf(gameState, banner.player)].banner}>
             The {NATIONS[nationOf(gameState, banner.player)].adjective} march
           </div>
           <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-[#E4E3E0]/70 mt-1">

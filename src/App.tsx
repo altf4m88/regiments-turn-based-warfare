@@ -12,6 +12,7 @@ import {
   Shuffle,
   Copy,
   ClipboardList,
+  EllipsisVertical,
   Move, 
   Users, 
   ChevronRight, 
@@ -53,11 +54,12 @@ import { twMerge } from 'tailwind-merge';
 import { Client } from "langsmith";
 import { Regiment, Tile, GameState, GameMode, UnitType, Facing, GameAnimation, AiConfig, AiProvider, Nation, ThinkingLevelSetting } from './game/types';
 import { getInitialState, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath, resolveAttack, nextRegimentId, parseUnitType, NATIONS, nationOf, nationsFor, isAiPlayer, aiPlayerOf, humanPlayerOf, VERSUS_AI_PLAYER, bumpTally, snapshot, sideStats, victoryReason, randomSeed, normalizeSeed } from './game/engine';
-import { AI_MODELS, AI_PROVIDERS, THINKING_LEVELS, resolveAiModel } from './ai/models';
+import { AI_MODELS, AI_PROVIDERS, THINKING_LEVELS, describeModel, resolveAiModel } from './ai/models';
 import { AiSession, startAiSession } from './ai/session';
 import { Markdown, plainText } from './ui/Markdown';
 import { BattleReport, CasualtyPanel, MapPreview } from './ui/BattleReport';
 import { BattleRecord, generalOf, loadBattles, recordBattle, saveBattle } from './game/history';
+import { startsCompact, useCompact } from './ui/useCompact';
 
 // The 3D battlefield (three.js) is code-split so the 2D view stays light.
 const BattlefieldView = lazy(() => import('./three/BattlefieldView'));
@@ -308,10 +310,10 @@ const AiConfigModal = ({
       <motion.div 
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
-        className={cn("bg-[#E4E3E0] border-2 border-[#141414] p-8 w-full max-h-full overflow-y-auto shadow-2xl flex flex-col gap-6", versus ? "max-w-md" : "max-w-2xl")}
+        className={cn("bg-[#E4E3E0] border-2 border-[#141414] p-5 sm:p-8 w-full max-h-full overflow-y-auto shadow-2xl flex flex-col gap-5 sm:gap-6", versus ? "max-w-md" : "max-w-2xl")}
       >
         <div className="flex justify-between items-center border-b border-[#141414] pb-4">
-          <h2 className="text-2xl font-bold uppercase tracking-tight">{versus ? 'Your Opponent' : 'AI General Configuration'}</h2>
+          <h2 className="text-xl sm:text-2xl font-bold uppercase tracking-tight">{versus ? 'Your Opponent' : 'AI General Configuration'}</h2>
           <button onClick={onClose} className="hover:rotate-90 transition-transform">
             <X size={24} />
           </button>
@@ -514,8 +516,11 @@ export default function App() {
   const [mapRotation, setMapRotation] = useState(0);
   const [commandInput, setCommandInput] = useState('');
   const [commandError, setCommandError] = useState<string | null>(null);
-  const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(true);
-  const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(true);
+  // On a phone the side panels float over the map, so they start closed there.
+  const compact = useCompact();
+  const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(() => !startsCompact());
+  const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(() => !startsCompact());
+  const [menuOpen, setMenuOpen] = useState(false);
   const [isAiThinking, setIsAiThinking] = useState(false);
   const [aiMonologue, setAiMonologue] = useState<string | null>(null);
   const [dispatchExpanded, setDispatchExpanded] = useState(false);
@@ -720,6 +725,32 @@ export default function App() {
   // On an AI general's turn a person can look over the field, but not give orders.
   const humanTurn = !isAiPlayer(gameState, gameState.currentPlayer);
   const commandable = (r: Regiment | undefined): r is Regiment => !!r && humanTurn && r.owner === gameState.currentPlayer;
+
+  // Becoming compact (a phone rotated, a window narrowed) closes the panels, which would cover the map.
+  useEffect(() => {
+    if (!compact) return;
+    setIsLeftSidebarOpen(false);
+    setIsRightSidebarOpen(false);
+  }, [compact]);
+
+  // On a phone, the end of a battle clears the panels so the report and the field are in view.
+  useEffect(() => {
+    if (compact && gameState.winner) {
+      setIsLeftSidebarOpen(false);
+      setIsRightSidebarOpen(false);
+    }
+  }, [compact, gameState.winner]);
+
+  /** Opens or closes a side panel; on a phone only one is open at a time. */
+  const togglePanel = (which: 'left' | 'right') => {
+    const open = which === 'left' ? !isLeftSidebarOpen : !isRightSidebarOpen;
+    if (which === 'left') setIsLeftSidebarOpen(open); else setIsRightSidebarOpen(open);
+    if (compact && open) (which === 'left' ? setIsRightSidebarOpen : setIsLeftSidebarOpen)(false);
+  };
+  const closePanels = () => {
+    setIsLeftSidebarOpen(false);
+    setIsRightSidebarOpen(false);
+  };
 
   const handleTileClick = (x: number, y: number) => {
     if (gameState.winner) return;
@@ -1869,10 +1900,11 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
 
   if (gameState.gameMode === null) {
     return (
-      <div className="fixed inset-0 bg-[#E4E3E0] flex items-center justify-center z-50 p-8">
-        <div className="max-w-2xl w-full border border-[#141414] p-12 bg-white shadow-2xl flex flex-col gap-8">
+      <div className="fixed inset-0 bg-[#E4E3E0] flex overflow-y-auto z-50 p-3 sm:p-8">
+        {/* m-auto centres the card when it fits and lets it scroll from the top when it does not (a phone held sideways) */}
+        <div className="m-auto max-w-2xl w-full border border-[#141414] p-5 sm:p-12 [@media(max-height:560px)]:p-5 bg-white shadow-2xl flex flex-col gap-6 sm:gap-8 [@media(max-height:560px)]:gap-5">
           <div className="text-center space-y-2">
-            <h1 className="text-6xl font-serif italic tracking-tighter leading-none">REGIMENTS</h1>
+            <h1 className="text-4xl sm:text-6xl [@media(max-height:560px)]:text-4xl font-serif italic tracking-tighter leading-none">REGIMENTS</h1>
           </div>
           
           <div className="space-y-3">
@@ -1902,7 +1934,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
             </p>
           </div>
 
-          <div className="flex items-center gap-5 border border-[#141414]/15 p-4">
+          <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-5 border border-[#141414]/15 p-4">
             {(() => {
               const code = normalizeSeed(seedInput);
               const preview = code ? getInitialState(nationsFor(p1Nation), code) : null;
@@ -1938,7 +1970,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <button 
               onClick={() => startGame('manual', gameState.aiConfigs)}
-              className="p-6 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex flex-col items-center gap-4 group"
+              className="p-4 sm:p-6 [@media(max-height:560px)]:p-3 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex flex-col items-center gap-3 sm:gap-4 group"
             >
               <Users size={44} className="group-hover:scale-110 transition-transform" />
               <div className="text-center">
@@ -1949,7 +1981,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
 
             <button 
               onClick={() => { setAiSetupMode('versus'); setShowAiConfig(true); }}
-              className="p-6 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex flex-col items-center gap-4 group"
+              className="p-4 sm:p-6 [@media(max-height:560px)]:p-3 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex flex-col items-center gap-3 sm:gap-4 group"
             >
               <Swords size={44} className="group-hover:scale-110 transition-transform" />
               <div className="text-center">
@@ -1960,7 +1992,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
             
             <button 
               onClick={() => { setAiSetupMode('ai'); setShowAiConfig(true); }}
-              className="p-6 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex flex-col items-center gap-4 group"
+              className="p-4 sm:p-6 [@media(max-height:560px)]:p-3 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex flex-col items-center gap-3 sm:gap-4 group"
             >
               <Terminal size={44} className="group-hover:scale-110 transition-transform" />
               <div className="text-center">
@@ -1992,8 +2024,81 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
   }
 
   return (
-    <div className="h-screen flex flex-col bg-[#E4E3E0] text-[#141414] font-sans selection:bg-[#141414] selection:text-[#E4E3E0] overflow-hidden">
-      {/* Header */}
+    <div className="h-dvh flex flex-col bg-[#E4E3E0] text-[#141414] font-sans selection:bg-[#141414] selection:text-[#E4E3E0] overflow-hidden">
+      {/* Header: one slim row on a phone, with the less used controls in a menu */}
+      {compact ? (
+      <header className="border-b border-[#141414] px-2 py-1 flex items-center gap-2 relative z-[85] bg-[#E4E3E0]">
+        <h1 className="hidden sm:block text-lg font-bold tracking-tighter uppercase italic font-serif shrink-0">Regiments</h1>
+        <div className="flex-1 min-w-0 flex items-center gap-3 overflow-x-auto">
+          <div className="leading-tight shrink-0">
+            <p className={cn("text-sm font-bold uppercase whitespace-nowrap", side(gameState.currentPlayer).text)}>
+              P{gameState.currentPlayer} · {NATIONS[nationOf(gameState, gameState.currentPlayer)].adjective}
+            </p>
+            <p className="text-[9px] font-mono uppercase opacity-60 whitespace-nowrap flex items-center gap-1">
+              {isAiThinking && <Cpu size={9} className="animate-spin" />}
+              {!humanTurn ? describeModel(gameState.aiConfigs[gameState.currentPlayer]) : gameState.gameMode === 'versus' ? 'Your command' : 'To move'}
+            </p>
+          </div>
+          {[
+            { label: 'Supply', value: String(gameState.supply[gameState.currentPlayer]), cls: side(gameState.currentPlayer).textSoft },
+            { label: 'Center', value: gameState.capturePointOwner ? `${gameState.capturePointTurns}/5` : '---', cls: gameState.capturePointOwner ? side(gameState.capturePointOwner).text : 'opacity-30' },
+            { label: 'Turn', value: String(gameState.turn), cls: '' },
+          ].map(st => (
+            <div key={st.label} className="leading-tight shrink-0 text-center">
+              <p className="text-[8px] uppercase font-mono opacity-50">{st.label}</p>
+              <p className={cn("text-sm font-bold font-mono", st.cls)}>{st.value}</p>
+            </div>
+          ))}
+        </div>
+        {aiStalled && !humanTurn && !gameState.winner && (
+          <button onClick={retryAiTurn} className="h-9 px-2 border border-red-700 text-red-700 text-[9px] font-bold uppercase flex items-center gap-1 shrink-0" title="The AI general's turn failed. Run it again.">
+            <RotateCcw size={14} /> Retry
+          </button>
+        )}
+        {(gameState.gameMode === 'ai' || gameState.gameMode === 'versus') && (
+          <button
+            onClick={() => setAiPaused(p => !p)}
+            className={cn("h-9 w-9 border border-[#141414] flex items-center justify-center shrink-0", aiPaused && "bg-[#141414] text-[#E4E3E0]")}
+            title={aiPaused ? 'Resume the AI generals' : 'Pause the AI generals after the current turn'}
+            aria-label={aiPaused ? 'Resume AI' : 'Pause AI'}
+          >
+            {aiPaused ? <Play size={16} /> : <Pause size={16} />}
+          </button>
+        )}
+        <button
+          onClick={() => setMenuOpen(o => !o)}
+          className={cn("h-9 w-9 border border-[#141414] flex items-center justify-center shrink-0", menuOpen && "bg-[#141414] text-[#E4E3E0]")}
+          aria-label="Menu"
+          aria-expanded={menuOpen}
+        >
+          <EllipsisVertical size={16} />
+        </button>
+        {menuOpen && (
+          <>
+            <div className="fixed inset-0 z-[86]" onClick={() => setMenuOpen(false)} />
+            <div className="absolute right-2 top-full mt-1 z-[87] w-60 bg-[#E4E3E0] border border-[#141414] shadow-2xl p-2 space-y-2">
+              <div className="grid grid-cols-2 border border-[#141414]" role="group" aria-label="Battlefield view">
+                {(['3d', '2d'] as const).map(mode => (
+                  <button
+                    key={mode}
+                    onClick={() => { setViewMode(mode); setMenuOpen(false); }}
+                    className={cn("py-2.5 flex items-center justify-center gap-1.5 text-[10px] uppercase font-bold", viewMode === mode ? "bg-[#141414] text-[#E4E3E0]" : "bg-white")}
+                  >
+                    {mode === '3d' ? <Box size={14} /> : <LayoutGrid size={14} />} {mode === '3d' ? '3D field' : '2D map'}
+                  </button>
+                ))}
+              </div>
+              <button onClick={() => { setShowAiConfig(true); setMenuOpen(false); }} className="w-full py-2.5 px-3 border border-[#141414] bg-white text-[10px] uppercase font-bold flex items-center gap-2">
+                <Settings size={14} /> AI settings
+              </button>
+              <button onClick={() => { setMenuOpen(false); abandonBattle(); }} className="w-full py-2.5 px-3 border border-[#141414] bg-white text-[10px] uppercase font-bold flex items-center gap-2">
+                <RotateCcw size={14} /> Abandon battle
+              </button>
+            </div>
+          </>
+        )}
+      </header>
+      ) : (
       <header className="border-b border-[#141414] p-4 flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold tracking-tighter uppercase italic font-serif">Regiments</h1>
@@ -2126,6 +2231,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
           </button>
         </div>
       </header>
+      )}
 
       <main className="flex-1 flex overflow-hidden relative">
         {/* With the HUD column hidden, the AI general's dispatch floats as a compact card in the
@@ -2140,7 +2246,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
               onClick={() => setDispatchMinimized(false)}
               className={cn(
                 "absolute z-[60] top-4 px-3 py-2 border-2 bg-white/90 backdrop-blur-sm shadow-lg flex items-center gap-2 font-bold uppercase text-[9px] tracking-wider",
-                "right-4",
+                compact ? "right-2 top-14" : "right-4",
                 side(gameState.currentPlayer).bubble
               )}
               aria-label="Show the AI general's dispatch"
@@ -2155,8 +2261,8 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               className={cn(
-                "absolute z-[60] top-4 w-[min(380px,calc(100%-2rem))] border-2 bg-white/90 backdrop-blur-sm shadow-xl",
-                "right-4",
+                "absolute z-[60] top-4 w-[min(380px,calc(100%-1rem))] border-2 bg-white/90 backdrop-blur-sm shadow-xl",
+                compact ? "right-2 top-14" : "right-4",
                 side(gameState.currentPlayer).bubble
               )}
             >
@@ -2183,17 +2289,30 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
           ))}
         </AnimatePresence>
 
+        {compact && (isLeftSidebarOpen || isRightSidebarOpen) && (
+          <div className="absolute inset-0 z-[70] bg-[#141414]/30" onClick={closePanels} aria-hidden />
+        )}
+
         {/* Sidebar Left: Unit Info */}
         <AnimatePresence>
           {isLeftSidebarOpen && (
             <motion.aside 
-              initial={{ width: 0, opacity: 0 }}
-              animate={{ width: 320, opacity: 1 }}
-              exit={{ width: 0, opacity: 0 }}
-              transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-              className="border-r border-[#141414] flex flex-col gap-6 overflow-hidden bg-[#E4E3E0] z-20"
+              initial={compact ? { x: '-100%' } : { width: 0, opacity: 0 }}
+              animate={compact ? { x: 0 } : { width: 320, opacity: 1 }}
+              exit={compact ? { x: '-100%' } : { width: 0, opacity: 0 }}
+              transition={compact ? { type: 'tween', duration: 0.2 } : { type: 'spring', stiffness: 300, damping: 30 }}
+              className={cn(
+                "border-r border-[#141414] flex flex-col gap-6 overflow-hidden bg-[#E4E3E0] z-20",
+                compact && "absolute inset-y-0 left-0 z-[75] shadow-2xl"
+              )}
             >
-              <div className="w-80 p-6 flex flex-col gap-6 overflow-y-auto h-full">
+              <div className={cn("flex flex-col gap-6 overflow-y-auto h-full", compact ? "w-[min(20rem,88vw)] p-4" : "w-80 p-6")}>
+                {compact && (
+                  <div className="flex items-center justify-between -mb-2">
+                    <p className="text-[10px] uppercase tracking-widest font-bold font-mono">Intel</p>
+                    <button onClick={closePanels} className="h-9 w-9 flex items-center justify-center border border-[#141414]" aria-label="Close Intel"><X size={16} /></button>
+                  </div>
+                )}
                 <section>
                   <h2 className="text-[11px] uppercase tracking-widest opacity-50 font-serif italic mb-4">Selected Regiment</h2>
                   <AnimatePresence mode="wait">
@@ -2412,7 +2531,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
         {/* Game Map */}
         <section className={cn(
           "flex-1 relative",
-          viewMode === '3d' ? "overflow-hidden bg-[#c9d2c6]" : "bg-[#D1D0CC] overflow-auto p-12 flex flex-col items-center"
+          viewMode === '3d' ? "overflow-hidden bg-[#c9d2c6]" : cn("bg-[#D1D0CC] overflow-auto flex flex-col items-start", compact ? "p-4" : "p-12")
         )}>
           {viewMode === '3d' ? (
             <Suspense fallback={
@@ -2424,6 +2543,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
                 gameState={gameState}
                 mapRotation={mapRotation}
                 aiMode={!humanTurn}
+                compact={compact}
                 onTileClick={handleTileClick3D}
                 onTileHover={setHoveredTile}
               />
@@ -2432,7 +2552,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
           <motion.div 
             animate={{ rotate: mapRotation }}
             transition={{ type: 'spring', stiffness: 100, damping: 20 }}
-            className="grid gap-0 border border-[#141414] shadow-2xl relative shrink-0"
+            className="grid gap-0 border border-[#141414] shadow-2xl relative shrink-0 mx-auto"
             style={{ 
               gridTemplateColumns: `repeat(${gameState.map[0].length}, ${TILE_SIZE}px)`,
               gridTemplateRows: `repeat(${gameState.map.length}, ${TILE_SIZE}px)`
@@ -2612,14 +2732,14 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
               history={battleHistory}
               onRematch={rematch}
               onExport={exportReport}
-              onViewField={() => setReportHidden(true)}
+              onViewField={() => { setReportHidden(true); if (compact) closePanels(); }}
               onNewCampaign={resetGame}
             />
           )}
           {gameState.winner && reportHidden && (
             <button
               onClick={() => setReportHidden(false)}
-              className="absolute top-14 right-3 z-40 px-4 py-2.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 shadow-xl hover:bg-[#2a2a2a]"
+              className={cn("fixed z-[78] px-4 py-2.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 shadow-xl hover:bg-[#2a2a2a]", compact ? "top-14 right-2" : cn("top-24", isRightSidebarOpen ? "right-[17rem]" : "right-4"))}
             >
               <ClipboardList size={14} /> Battle report
             </button>
@@ -2630,13 +2750,21 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
         <AnimatePresence>
           {isRightSidebarOpen && (
             <motion.aside 
-              initial={{ width: 0, opacity: 0 }}
-              animate={{ width: 256, opacity: 1 }}
-              exit={{ width: 0, opacity: 0 }}
-              transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-              className="border-l border-[#141414] flex flex-col gap-8 overflow-hidden bg-[#E4E3E0] z-20"
+              initial={compact ? { x: '100%' } : { width: 0, opacity: 0 }}
+              animate={compact ? { x: 0 } : { width: 256, opacity: 1 }}
+              exit={compact ? { x: '100%' } : { width: 0, opacity: 0 }}
+              transition={compact ? { type: 'tween', duration: 0.2 } : { type: 'spring', stiffness: 300, damping: 30 }}
+              className={cn(
+                "border-l border-[#141414] flex flex-col gap-8 overflow-hidden bg-[#E4E3E0] z-20",
+                compact && "absolute inset-y-0 right-0 z-[75] shadow-2xl"
+              )}
             >
-              <div className="w-64 p-6 flex flex-col gap-8 h-full overflow-y-auto">
+              <div className={cn("flex flex-col h-full overflow-y-auto", compact ? "w-[min(18rem,88vw)] p-4 gap-6" : "w-64 p-6 gap-8")}>
+                {compact && (
+                  <div className="flex justify-end -mb-10 relative z-10">
+                    <button onClick={closePanels} className="h-9 w-9 flex items-center justify-center border border-[#141414]" aria-label="Close HUD"><X size={16} /></button>
+                  </div>
+                )}
                 <section>
                   <h2 className="text-[11px] uppercase tracking-widest opacity-50 font-serif italic mb-4">Tactical HUD</h2>
                   <div className="space-y-4">
@@ -2771,7 +2899,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
                         </div>
                       )}
                       <textarea 
-                        autoFocus
+                        autoFocus={!compact}
                         rows={3}
                         value={commandInput}
                         disabled={isAiThinking}
@@ -2816,6 +2944,81 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
           )}
         </AnimatePresence>
       </main>
+
+      {/* Phone command bar: the panels, the selected regiment's orders and End Turn, within thumb's reach */}
+      {compact && (
+        <nav className="border-t border-[#141414] bg-[#E4E3E0] flex flex-wrap sm:flex-nowrap items-center gap-1.5 px-2 pt-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom))] z-[80]" aria-label="Commands">
+          <div className={cn(
+            "min-w-0 items-center gap-1.5 order-first basis-full sm:order-none sm:basis-auto sm:flex-1",
+            selectedUnit ? "flex" : "hidden sm:flex"
+          )}>
+            {selectedUnit ? (
+              <>
+                <div className="min-w-0 flex-1 leading-tight px-1">
+                  <p className={cn("text-[11px] font-bold uppercase truncate", side(selectedUnit.owner).text)}>{selectedUnit.name}</p>
+                  <p className="text-[9px] font-mono opacity-60 truncate">
+                    {selectedUnit.id} · {selectedUnit.men} men · {selectedUnit.mp}/{selectedUnit.maxMp} MP
+                    {selectedUnit.isEntrenched ? ' · dug in' : selectedUnit.isBoxFormation ? ' · square' : selectedUnit.isPalisaded ? ' · palisaded' : ''}
+                  </p>
+                </div>
+                {commandable(selectedUnit) && (
+                  <div className="flex items-center gap-1 shrink-0">
+                    {[
+                      { key: 'ccw', icon: <RotateCcw size={16} />, label: 'Turn left (1 MP)', on: false, run: () => handleRotate('ccw'), show: true },
+                      { key: 'cw', icon: <RotateCw size={16} />, label: 'Turn right (1 MP)', on: false, run: () => handleRotate('cw'), show: true },
+                      { key: 'ent', icon: <Shield size={16} />, label: selectedUnit.isEntrenched ? 'Leave earthworks (1 MP)' : 'Entrench (all MP)', on: selectedUnit.isEntrenched, run: handleEntrench, show: true },
+                      { key: 'box', icon: <Square size={16} />, label: selectedUnit.isBoxFormation ? 'Disband square (1 MP)' : 'Form square (1 MP)', on: selectedUnit.isBoxFormation, run: handleToggleBox, show: selectedUnit.type === 'line_infantry' },
+                      { key: 'pal', icon: <Fence size={16} />, label: selectedUnit.isPalisaded ? 'Remove palisades' : 'Erect palisades', on: selectedUnit.isPalisaded, run: handleTogglePalisade, show: selectedUnit.type === 'cannon' },
+                    ].filter(b => b.show).map(b => (
+                      <button
+                        key={b.key}
+                        onClick={b.run}
+                        disabled={selectedUnit.mp < 1}
+                        title={b.label}
+                        aria-label={b.label}
+                        aria-pressed={b.on}
+                        className={cn("h-10 w-10 border border-[#141414] flex items-center justify-center disabled:opacity-30", b.on ? "bg-[#141414] text-[#E4E3E0]" : "bg-white")}
+                      >
+                        {b.icon}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : (
+              <p className="text-[10px] font-mono uppercase opacity-50 px-1 truncate">
+                {humanTurn ? 'Tap a regiment to give it orders' : "The AI general is moving"}
+              </p>
+            )}
+          </div>
+          <button
+            onClick={() => togglePanel('left')}
+            className={cn("h-10 px-3 border border-[#141414] flex items-center gap-1.5 text-[10px] uppercase font-bold", isLeftSidebarOpen ? "bg-[#141414] text-[#E4E3E0]" : "bg-white")}
+            aria-expanded={isLeftSidebarOpen}
+          >
+            <Users size={14} /> Intel
+          </button>
+          <button
+            onClick={() => togglePanel('right')}
+            className={cn("h-10 px-3 border border-[#141414] flex items-center gap-1.5 text-[10px] uppercase font-bold", isRightSidebarOpen ? "bg-[#141414] text-[#E4E3E0]" : "bg-white")}
+            aria-expanded={isRightSidebarOpen}
+          >
+            <Terminal size={14} /> HUD
+          </button>
+          <button
+            onClick={() => {
+              if (!humanTurn || gameState.winner) return;
+              endTurn();
+              setCommandInput('');
+              setCommandError(null);
+            }}
+            disabled={!humanTurn || !!gameState.winner}
+            className="h-10 px-4 ml-auto sm:ml-0 bg-[#141414] text-[#E4E3E0] text-[10px] uppercase font-bold tracking-widest flex items-center gap-1.5 disabled:opacity-40"
+          >
+            {humanTurn ? <>End turn <ChevronRight size={14} /></> : <><Cpu size={14} /> AI's turn</>}
+          </button>
+        </nav>
+      )}
     </div>
   );
 }

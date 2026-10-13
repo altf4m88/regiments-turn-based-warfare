@@ -9,6 +9,8 @@ On the start screen, choose the army Player 1 commands (British or French; Playe
 - **Human vs AI**: you command one army and an AI general commands the other. In the dialog that opens, choose your side (Player 1 in the south moves first; Player 2 in the north moves second) and the general's provider, model and thinking level. On its turn the general moves by itself: you can watch, select regiments to inspect them and use the CLI's information commands (`ls`, `status` and so on), but your orders wait until your turn. In 3D the camera stays on your side of the field and follows the enemy's moves.
 - **AI Gameplay**: an AI general commands each army, and you watch.
 
+**On a phone or tablet.** On a narrow screen, or a phone held sideways, the header shrinks to one line (view, AI settings and abandon move into its ⋮ menu). The Intel and HUD panels slide over the map from a command bar at the bottom, which also carries the selected regiment's orders (turn, entrench, square, palisade) and End Turn. In 3D, drag to pan, pinch to zoom, twist with two fingers to rotate, and double-tap to focus.
+
 **Map codes.** Every battlefield comes from a map code such as `K7QM2X`, shown on the start screen with a preview, and in the Tactical HUD during the battle. The same code always generates the same map, so you can replay it, share it, or compare generals on it. Leave the code as it is for a new random map, roll another with **New map**, or type one in.
 
 **Battle statistics.** The *Casualties* panel shows each army's regiments and men standing and lost as the battle goes on. When a battle ends, a report shows:
