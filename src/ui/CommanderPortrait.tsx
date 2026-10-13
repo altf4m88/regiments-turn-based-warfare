@@ -1,5 +1,6 @@
 import { PORTRAITS } from '../assets/portraits';
 import { Nation } from '../game/types';
+import { useCustomPortrait } from './customPortraits';
 
 const RING: Record<Nation, string> = { british: '#b91c1c', french: '#1d4ed8' };
 const COAT: Record<Nation, { coat: string; facing: string; field: string }> = {
@@ -8,11 +9,13 @@ const COAT: Record<Nation, { coat: string; facing: string; field: string }> = {
 };
 
 /**
- * A commander's bust: their portrait when the game has one, otherwise an officer's
- * silhouette in the colours of their army (bicorne, high collar, epaulettes).
+ * A commander's bust: the portrait the player gave them, else the game's portrait of a
+ * historical commander, else an officer's silhouette in the colours of their army
+ * (bicorne, high collar, epaulettes).
  */
 export function CommanderPortrait({ name, nation, size = 48, className = '' }: { name: string; nation: Nation; size?: number; className?: string }) {
-  const src = PORTRAITS[name];
+  const custom = useCustomPortrait(name);
+  const src = custom ?? PORTRAITS[name];
   const ring = Math.max(2, Math.round(size / 24));
   const style = { width: size, height: size, boxShadow: `0 0 0 ${ring}px ${RING[nation]}` };
   if (src) {

@@ -3,6 +3,7 @@ import { Download, Eye, Repeat, RotateCcw, Shuffle, Trophy } from 'lucide-react'
 import { DOCTRINES, NATIONS, commanderOf, doctrineOf, isAiPlayer, nationOf, sideStats, victoryReason, VictoryReason } from '../game/engine';
 import { resolveAiModel } from '../ai/models';
 import { ProviderIcon } from './ProviderIcon';
+import { CommanderPortrait } from './CommanderPortrait';
 import { BattleRecord, armyOf, generalOf } from '../game/history';
 import { GameState, Nation, Regiment, Tile } from '../game/types';
 import { ARMY_COLOR, StrengthChart } from './StrengthChart';
@@ -151,7 +152,10 @@ export function BattleReport({ state, history, onRematch, onExport, onViewField,
                       <Key nation={sd.nation} /> {NATIONS[sd.nation].adjective}
                       {sd.player === winner && <span className="ml-1 px-1.5 py-0.5 text-[9px] tracking-widest bg-[#141414] text-[#E4E3E0]">Victor</span>}
                     </span>
-                    <span className="block font-serif italic text-base mt-0.5">{sd.commander}</span>
+                    <span className="flex items-center gap-2 mt-1">
+                      <CommanderPortrait name={sd.commander} nation={sd.nation} size={30} />
+                      <span className="font-serif italic text-base leading-tight">{sd.commander}</span>
+                    </span>
                     <span className="block text-[10px] font-mono uppercase text-[#141414]/80 mt-0.5">{sd.army}</span>
                     <span className="flex items-center gap-1 text-[10px] font-mono uppercase text-[#141414]/60 mt-0.5">
                       <ProviderIcon provider={sd.provider} model={sd.model} size={11} />

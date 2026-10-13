@@ -47,7 +47,8 @@ import {
   Play,
   X,
   Box,
-  LayoutGrid
+  LayoutGrid,
+  Camera
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -68,6 +69,8 @@ import { TurnBanner } from './ui/TurnBanner';
 import { DispatchBubble } from './ui/DispatchBubble';
 import { CommanderPortrait } from './ui/CommanderPortrait';
 import { ArmyPicker } from './ui/ArmyPicker';
+import { PortraitEditor } from './ui/PortraitEditor';
+import { useCustomPortraits } from './ui/customPortraits';
 import { ProviderIcon } from './ui/ProviderIcon';
 
 // The 3D battlefield (three.js) is code-split so the 2D view stays light.
@@ -369,8 +372,15 @@ const AiConfigModal = ({
             <div key={playerNum} className="space-y-4 p-4 border border-[#141414]/20 bg-white/50">
               <h3 className={cn("font-bold uppercase text-sm border-b border-[#141414] pb-2", SIDE_UI[nations[playerNum]].text)}>
                 Player {playerNum} · {NATIONS[nations[playerNum]].adjective}{versus && ' · AI general'}
-                {commanders?.[playerNum] && <span className="block mt-0.5 normal-case font-serif italic text-base text-[#141414]">{commanders[playerNum]}</span>}
-                {armies?.[playerNum] && <span className="block text-[10px] font-mono text-[#141414]/60">{DOCTRINES[armies[playerNum]].name}</span>}
+                {commanders?.[playerNum] && (
+                  <span className="flex items-center gap-2.5 mt-1.5 normal-case">
+                    <CommanderPortrait name={commanders[playerNum]} nation={nations[playerNum]} size={34} />
+                    <span className="min-w-0">
+                      <span className="block font-serif italic text-base text-[#141414] leading-tight">{commanders[playerNum]}</span>
+                      {armies?.[playerNum] && <span className="block text-[10px] font-mono uppercase text-[#141414]/60">{DOCTRINES[armies[playerNum]].name}</span>}
+                    </span>
+                  </span>
+                )}
               </h3>
               
               <div className="space-y-1">
@@ -676,6 +686,9 @@ export default function App() {
       return { british: 'balanced', french: 'balanced' };
     }
   });
+  // Generals the player gave a portrait, offered again by name; and whose portrait is being edited.
+  const customPortraits = useCustomPortraits();
+  const [portraitFor, setPortraitFor] = useState<Nation | null>(null);
   const aiTurnRef = useRef<{ turn: number, player: number } | null>(null);
   // Bumped when a battle is abandoned, so an AI turn still in flight stops touching the game.
   const battleRef = useRef(0);
@@ -2122,7 +2135,17 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
                 return (
                   <div key={n} className="border border-[#141414]/15">
                     <div className="flex items-center gap-2 pl-2 pr-1 py-1.5">
-                      <CommanderPortrait name={normalizeCommander(commanderNames[n]) || DEFAULT_COMMANDERS[n]} nation={n} size={32} />
+                      <button
+                        onClick={() => setPortraitFor(n)}
+                        className="relative shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[#141414] focus-visible:ring-offset-2"
+                        aria-label={`Change ${normalizeCommander(commanderNames[n]) || DEFAULT_COMMANDERS[n]}'s portrait`}
+                        title="Change the portrait"
+                      >
+                        <CommanderPortrait name={normalizeCommander(commanderNames[n]) || DEFAULT_COMMANDERS[n]} nation={n} size={36} />
+                        <span className="absolute -bottom-1 -right-1 w-[18px] h-[18px] rounded-full bg-[#141414] text-[#E4E3E0] border-2 border-white flex items-center justify-center" aria-hidden>
+                          <Camera size={9} />
+                        </span>
+                      </button>
                       <span className="text-[9px] font-mono uppercase opacity-60 shrink-0">P{player}</span>
                       <input
                         list={`commanders-${n}`}
@@ -2134,7 +2157,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
                         className="flex-1 min-w-0 bg-transparent font-serif italic text-lg py-1 outline-none focus:underline"
                       />
                       <datalist id={`commanders-${n}`}>
-                        {COMMANDERS[n].map(c => <option key={c} value={c} />)}
+                        {[...COMMANDERS[n], ...customPortraits.filter(c => c.nation === n && !COMMANDERS[n].includes(c.name)).map(c => c.name)].map(c => <option key={c} value={c} />)}
                       </datalist>
                       <button
                         onClick={roll}
@@ -2151,8 +2174,15 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
               })}
             </div>
             <p className="text-[10px] font-mono text-center opacity-50">
-              Pick a marshal or general of the period, or type any name. The armies cost about the same; an AI general fights to its army's strengths.
+              Pick a marshal or general of the period, or type any name and tap the portrait to give them your own. The armies cost about the same; an AI general fights to its army's strengths.
             </p>
+            {portraitFor && (
+              <PortraitEditor
+                name={normalizeCommander(commanderNames[portraitFor]) || DEFAULT_COMMANDERS[portraitFor]}
+                nation={portraitFor}
+                onClose={() => setPortraitFor(null)}
+              />
+            )}
           </div>
 
           <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-5 border border-[#141414]/15 p-4">
