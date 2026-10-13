@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { GameState } from '../../game/types';
-import { VERSUS_HUMAN_PLAYER, nationOf } from '../../game/engine';
+import { humanPlayerOf, nationOf } from '../../game/engine';
 import { MAP_N, TILE, inMap, tileCenter } from '../core/constants';
 import { flagUniforms } from '../models/flags';
 import { ActionEvent, UnitManager } from '../units/UnitManager';
@@ -185,7 +185,7 @@ export class Battlefield {
 
   /** The army the camera sits behind: in Human vs AI always the person's, otherwise whoever is to move. */
   private viewPlayer(state: GameState) {
-    return state.gameMode === 'versus' ? VERSUS_HUMAN_PLAYER : state.currentPlayer;
+    return state.gameMode === 'versus' ? humanPlayerOf(state) : state.currentPlayer;
   }
 
   /** New turn: swing round behind the army whose turn it is (or the person's, against an AI), looking towards the enemy. */

@@ -1,7 +1,35 @@
-import { Regiment, UnitType, Tile, GameState, Facing, Nation } from './types';
+import { Regiment, UnitType, Tile, GameState, Facing, Nation, SideTally, TurnSnapshot } from './types';
 import { DEFAULT_MODELS, DEFAULT_THINKING_LEVEL } from '../ai/models';
 
 const MAP_SIZE = 20;
+
+// -- Map codes -----------------------------------------------------------------
+
+/** Letters and digits that cannot be misread for one another (no 0/O, 1/I/L). */
+const SEED_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+
+/** A fresh six-character map code, such as "K7QM2X". */
+export const randomSeed = () =>
+  Array.from({ length: 6 }, () => SEED_ALPHABET[Math.floor(Math.random() * SEED_ALPHABET.length)]).join('');
+
+/** A map code as typed: upper case, letters and digits only, at most 12 characters. Empty means none. */
+export const normalizeSeed = (input: string) => input.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12);
+
+/** A deterministic random number generator (mulberry32) seeded from a map code. */
+export const seededRandom = (seed: string) => {
+  let h = 1779033703 ^ seed.length;
+  for (let i = 0; i < seed.length; i++) {
+    h = Math.imul(h ^ seed.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  let a = h >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
 
 const getOrdinal = (n: number) => {
   const s = ["th", "st", "nd", "rd"];
@@ -67,9 +95,9 @@ const generateRegimentName = (type: UnitType, nation: Nation, index: number): st
   return `${getOrdinal(index + 1)} ${name}`;
 };
 
-const generateStandardColor = () => {
+const generateStandardColor = (rand: () => number = Math.random) => {
   const colors = ["#b22222", "#4682b4", "#556b2f", "#daa520", "#4b0082", "#2f4f4f", "#8b4513", "#2e8b57"];
-  return colors[Math.floor(Math.random() * colors.length)];
+  return colors[Math.floor(rand() * colors.length)];
 };
 
 /**
@@ -128,45 +156,46 @@ export const createInitialRegiment = (
   };
 };
 
-export const generateMap = (): Tile[][] => {
+/** A battlefield; pass a seeded generator to get the same map every time. */
+export const generateMap = (rand: () => number = Math.random): Tile[][] => {
   const map: Tile[][] = [];
   for (let y = 0; y < MAP_SIZE; y++) {
     const row: Tile[] = [];
     for (let x = 0; x < MAP_SIZE; x++) {
       let terrain: Tile['terrain'] = 'grass';
-      const rand = Math.random();
-      if (rand < 0.1) terrain = 'forest';
-      else if (rand < 0.18) terrain = 'mountain'; // Hills
+      const roll = rand();
+      if (roll < 0.1) terrain = 'forest';
+      else if (roll < 0.18) terrain = 'mountain'; // Hills
       row.push({ x, y, terrain });
     }
     map.push(row);
   }
 
   // Generate continuous river
-  let riverX = Math.floor(Math.random() * (MAP_SIZE - 4)) + 2;
+  let riverX = Math.floor(rand() * (MAP_SIZE - 4)) + 2;
   for (let y = 0; y < MAP_SIZE; y++) {
     map[y][riverX].terrain = 'river';
-    const move = Math.random();
+    const move = rand();
     if (move < 0.2 && riverX > 1) riverX--;
     else if (move > 0.8 && riverX < MAP_SIZE - 2) riverX++;
-    if (Math.random() > 0.5 && riverX < MAP_SIZE - 1) {
+    if (rand() > 0.5 && riverX < MAP_SIZE - 1) {
       map[y][riverX + 1].terrain = 'river';
     }
   }
 
   // Generate continuous road
-  let roadY = Math.floor(Math.random() * (MAP_SIZE - 4)) + 2;
+  let roadY = Math.floor(rand() * (MAP_SIZE - 4)) + 2;
   for (let x = 0; x < MAP_SIZE; x++) {
     map[roadY][x].terrain = 'road';
-    const move = Math.random();
+    const move = rand();
     if (move < 0.1 && roadY > 1) roadY--;
     else if (move > 0.9 && roadY < MAP_SIZE - 2) roadY++;
   }
 
   // Generate building clusters (villages)
   for (let i = 0; i < 4; i++) {
-    const startX = Math.floor(Math.random() * (MAP_SIZE - 4)) + 2;
-    const startY = Math.floor(Math.random() * (MAP_SIZE - 4)) + 2;
+    const startX = Math.floor(rand() * (MAP_SIZE - 4)) + 2;
+    const startY = Math.floor(rand() * (MAP_SIZE - 4)) + 2;
     for (let dy = 0; dy < 2; dy++) {
       for (let dx = 0; dx < 2; dx++) {
         if (map[startY + dy][startX + dx].terrain !== 'river') {
@@ -186,8 +215,8 @@ export const generateMap = (): Tile[][] => {
   let nodesPlaced = 0;
   const radius = 4;
   while (nodesPlaced < 3) {
-    const x = Math.floor(Math.random() * (radius * 2 + 1)) + (centerX - radius);
-    const y = Math.floor(Math.random() * (radius * 2 + 1)) + (centerY - radius);
+    const x = Math.floor(rand() * (radius * 2 + 1)) + (centerX - radius);
+    const y = Math.floor(rand() * (radius * 2 + 1)) + (centerY - radius);
     
     // Ensure it's within map bounds and not the capture point
     if (x >= 0 && x < MAP_SIZE && y >= 0 && y < MAP_SIZE && (x !== centerX || y !== centerY)) {
@@ -291,8 +320,9 @@ export const getTerrainMpCost = (terrain: Tile['terrain']): number => {
   }
 };
 
-export const getInitialState = (nations: { [player: number]: Nation } = DEFAULT_NATIONS): GameState => {
-  const map = generateMap();
+export const getInitialState = (nations: { [player: number]: Nation } = DEFAULT_NATIONS, seed: string = randomSeed()): GameState => {
+  const rand = seededRandom(seed);
+  const map = generateMap(rand);
   const reg = (id: string, type: UnitType, owner: number, x: number, y: number, index: number) =>
     createInitialRegiment(id, type, owner, x, y, index, undefined, nations[owner]);
   
@@ -333,6 +363,8 @@ export const getInitialState = (nations: { [player: number]: Nation } = DEFAULT_
     reg('p1-h2', 'hussars', 1, 18, 17, 1),
     reg('p1-ch1', 'chasseurs', 1, 10, 18, 0), // Moved slightly to avoid CC
   ];
+  // The colours come from the map code too, so a rematch looks the same.
+  for (const r of regiments) r.standardColor = generateStandardColor(rand);
 
   return {
     map,
@@ -354,6 +386,10 @@ export const getInitialState = (nations: { [player: number]: Nation } = DEFAULT_
     },
     monologueHistory: [],
     nations: { ...nations },
+    seed,
+    battleId: `${seed}-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`,
+    tally: { 1: openingTally(regiments, 1), 2: openingTally(regiments, 2) },
+    timeline: [snapshot({ regiments }, 0, 0)],
     // Start numbering reinforcements after the starting regiments, so no id is ever reused.
     idCounters: regiments.reduce<Record<string, number>>((acc, r) => {
       const m = /^(p\d+-[a-z]+?)(\d+)$/.exec(r.id);
@@ -363,13 +399,103 @@ export const getInitialState = (nations: { [player: number]: Nation } = DEFAULT_
   };
 };
 
-/** In Human vs AI, the person commands Player 1 and the LLM general commands Player 2. */
-export const VERSUS_HUMAN_PLAYER = 1;
+/** In Human vs AI, the LLM general commands Player 2 unless you chose to play second. */
 export const VERSUS_AI_PLAYER = 2;
 
-/** Whether an LLM general commands this player: both in AI Gameplay, Player 2 in Human vs AI. */
-export const isAiPlayer = (state: Pick<GameState, 'gameMode'>, player: number) =>
-  state.gameMode === 'ai' || (state.gameMode === 'versus' && player === VERSUS_AI_PLAYER);
+/** The player the AI general commands in Human vs AI. */
+export const aiPlayerOf = (state: Pick<GameState, 'aiPlayer'>) => state.aiPlayer ?? VERSUS_AI_PLAYER;
+
+/** The player you command in Human vs AI. */
+export const humanPlayerOf = (state: Pick<GameState, 'aiPlayer'>) => 3 - aiPlayerOf(state);
+
+/** Whether an LLM general commands this player: both in AI Gameplay, one side in Human vs AI. */
+export const isAiPlayer = (state: Pick<GameState, 'gameMode' | 'aiPlayer'>, player: number) =>
+  state.gameMode === 'ai' || (state.gameMode === 'versus' && player === aiPlayerOf(state));
+
+// -- Idle regiments ------------------------------------------------------------------
+
+/**
+ * A player's regiments that have done nothing yet this turn: not moved, fought, turned,
+ * dug in, formed square, raised palisades or been told to hold. Fresh reinforcements
+ * (which cannot act yet) never count.
+ */
+export const idleRegiments = (state: Pick<GameState, 'regiments'>, player: number) =>
+  state.regiments.filter(r =>
+    r.owner === player && r.mp === r.maxMp && !r.hasAttacked &&
+    !r.isEntrenched && !r.isPalisaded && !r.isBoxFormation && !r.holding);
+
+/** One line for the roll call: where a regiment is, and what it could do right now. */
+export const describeIdle = (state: Pick<GameState, 'regiments'>, r: Regiment) => {
+  const dist = (e: Regiment) => Math.max(Math.abs(e.x - r.x), Math.abs(e.y - r.y));
+  const enemies = state.regiments.filter(e => e.owner !== r.owner).sort((a, b) => dist(a) - dist(b));
+  const targets = enemies.filter(e => dist(e) <= r.range && isTargetInFiringLine(r, e.x, e.y));
+  const nearest = enemies[0];
+  return `${r.id} (${r.type.replace('_', ' ')}) at ${r.x}:${r.y} facing ${r.facing}, ${r.men} men, ${r.mp} MP` +
+    (targets.length ? ` · can engage now: ${targets.slice(0, 4).map(e => e.id).join(', ')}` : ' · no enemy in range and arc') +
+    (nearest ? ` · nearest enemy ${nearest.id} at ${nearest.x}:${nearest.y} (${dist(nearest)} away)` : '');
+};
+
+// -- Battle statistics -------------------------------------------------------------
+
+const openingTally = (regiments: Regiment[], owner: number): SideTally => {
+  const mine = regiments.filter(r => r.owner === owner);
+  return {
+    startRegiments: mine.length,
+    startMen: mine.reduce((a, r) => a + r.men, 0),
+    raised: 0, raisedMen: 0, supplySpent: 0, supplyEarned: 0,
+    attacks: 0, charges: 0, capturePointTurns: 0, ordersRejected: 0,
+  };
+};
+
+/** Adds to a side's counts, e.g. bumpTally(tally, 1, { attacks: 1 }). */
+export const bumpTally = (
+  tally: GameState['tally'],
+  player: number,
+  add: Partial<Record<keyof SideTally, number>>,
+): GameState['tally'] => {
+  const side = { ...tally[player] };
+  for (const [k, v] of Object.entries(add)) side[k as keyof SideTally] += v ?? 0;
+  return { ...tally, [player]: side };
+};
+
+/** Both armies' men and regiments, as recorded after each turn. */
+export const snapshot = (state: Pick<GameState, 'regiments'>, turn: number, player: number): TurnSnapshot => {
+  const side = (p: number) => state.regiments.filter(r => r.owner === p);
+  return {
+    turn,
+    player,
+    men: { 1: side(1).reduce((a, r) => a + r.men, 0), 2: side(2).reduce((a, r) => a + r.men, 0) },
+    regiments: { 1: side(1).length, 2: side(2).length },
+  };
+};
+
+/** A side's standing and losses so far, worked out from its tally and the regiments on the field. */
+export const sideStats = (state: Pick<GameState, 'regiments' | 'tally'>, player: number) => {
+  const t = state.tally[player];
+  const mine = state.regiments.filter(r => r.owner === player);
+  const men = mine.reduce((a, r) => a + r.men, 0);
+  const lostMen = t.startMen + t.raisedMen - men;
+  const enemy = state.tally[3 - player];
+  const enemyMen = state.regiments.filter(r => r.owner === 3 - player).reduce((a, r) => a + r.men, 0);
+  return {
+    ...t,
+    regiments: mine.length,
+    men,
+    lostRegiments: t.startRegiments + t.raised - mine.length,
+    lostMen,
+    inflicted: enemy.startMen + enemy.raisedMen - enemyMen,
+  };
+};
+
+export type VictoryReason = 'capture_point' | 'command_center' | 'annihilation';
+
+/** How the winner won: holding the Capture Point, taking the enemy Command Center, or destroying every regiment. */
+export const victoryReason = (state: Pick<GameState, 'winner' | 'regiments' | 'capturePointOwner' | 'capturePointTurns'>): VictoryReason | null => {
+  if (!state.winner) return null;
+  if (!state.regiments.some(r => r.owner !== state.winner)) return 'annihilation';
+  if (state.capturePointOwner === state.winner && state.capturePointTurns >= 5) return 'capture_point';
+  return 'command_center';
+};
 
 /**
  * Whether an attack from (x, y) hits a regiment in the flank. Its front is the 90° cone

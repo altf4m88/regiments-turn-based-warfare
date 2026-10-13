@@ -7,7 +7,7 @@ This document provides a comprehensive list of commands, their usage, and the ru
 | Command | Usage | Description |
 | :--- | :--- | :--- |
 | `help` | `help` | Displays the list of available commands. |
-| `ls` | `ls [all\|types\|map\|supply\|info <id>\|tile <x>:<y>\|costs]` | Lists information about the game state. |
+| `ls` | `ls [all\|idle\|types\|map\|supply\|info <id>\|tile <x>:<y>\|costs]` | Lists information about the game state. |
 | `whoami` | `whoami` | Shows your player ID and current supply. |
 | `status` | `status` | Shows turn number, current player, and Capture Point status. |
 | `clear` | `clear` | Clears the command log. |
@@ -20,6 +20,7 @@ This document provides a comprehensive list of commands, their usage, and the ru
 - `ls map`: Lists strategic locations (Command Centers, Supply Nodes, Capture Point) and their owners.
 - `ls supply`: Shows the current supply levels for both players.
 - `ls info <id>`: Shows detailed statistics for a specific unit (e.g., `ls info p1-l1`).
+- `ls idle` (or `idle`): Lists your regiments that have not moved, fought, turned, dug in, formed square or been told to hold this turn, with the enemies each can engage now and the nearest enemy.
 - `ls tile <x>:<y>`: Shows terrain and unit information for a specific tile (e.g., `ls tile 10:10`).
 - `ls costs`: Shows the supply cost to spawn each unit type.
 
@@ -30,6 +31,7 @@ This document provides a comprehensive list of commands, their usage, and the ru
 | Command | Usage | Description |
 | :--- | :--- | :--- |
 | `sel` | `sel <id>` | Selects a unit on the map (visual only). |
+| `hold` | `hold <id>` | Keeps a regiment where it is this turn on purpose, so it no longer counts as idle. Free; the regiment can still fight. |
 | `mv` | `mv <id> <x>:<y>` | Moves a unit to a tile along the cheapest path (several tiles in one command). Costs the path's MP. The unit ends up facing its last step. |
 | `eg` | `eg <id> <targetId>` | Engages (attacks) an enemy unit in range and in its firing arc. Once per unit per turn; costs 1 MP. |
 | `ent` | `ent <id>` | Toggles entrenchment. Entrenching increases defense and costs all remaining MP (min 1); an entrenched unit cannot move. Leaving the earthworks costs 1 MP. |

@@ -9,6 +9,10 @@ import {
   Shield, 
   Sword, 
   Swords,
+  Shuffle,
+  Copy,
+  ClipboardList,
+  EllipsisVertical,
   Move, 
   Users, 
   ChevronRight, 
@@ -49,10 +53,13 @@ import { twMerge } from 'tailwind-merge';
 
 import { Client } from "langsmith";
 import { Regiment, Tile, GameState, GameMode, UnitType, Facing, GameAnimation, AiConfig, AiProvider, Nation, ThinkingLevelSetting } from './game/types';
-import { getInitialState, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath, resolveAttack, nextRegimentId, parseUnitType, NATIONS, nationOf, nationsFor, isAiPlayer, VERSUS_AI_PLAYER } from './game/engine';
-import { AI_MODELS, AI_PROVIDERS, THINKING_LEVELS, resolveAiModel } from './ai/models';
+import { getInitialState, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath, resolveAttack, nextRegimentId, parseUnitType, NATIONS, nationOf, nationsFor, isAiPlayer, aiPlayerOf, humanPlayerOf, VERSUS_AI_PLAYER, idleRegiments, describeIdle, bumpTally, snapshot, sideStats, victoryReason, randomSeed, normalizeSeed } from './game/engine';
+import { AI_MODELS, AI_PROVIDERS, THINKING_LEVELS, describeModel, resolveAiModel } from './ai/models';
 import { AiSession, startAiSession } from './ai/session';
 import { Markdown, plainText } from './ui/Markdown';
+import { BattleReport, CasualtyPanel, MapPreview } from './ui/BattleReport';
+import { BattleRecord, generalOf, loadBattles, recordBattle, saveBattle } from './game/history';
+import { startsCompact, useCompact } from './ui/useCompact';
 
 // The 3D battlefield (three.js) is code-split so the 2D view stays light.
 const BattlefieldView = lazy(() => import('./three/BattlefieldView'));
@@ -281,6 +288,7 @@ const AiConfigModal = ({
   onSave,
   nations,
   players = [1, 2],
+  onAiPlayerChange,
 }: { 
   isOpen: boolean; 
   onClose: () => void; 
@@ -289,6 +297,8 @@ const AiConfigModal = ({
   nations: { [player: number]: Nation };
   /** The players commanded by an LLM general: both, or only your opponent in Human vs AI. */
   players?: number[];
+  /** Human vs AI, before the battle: lets you choose which side you command. */
+  onAiPlayerChange?: (aiPlayer: number) => void;
 }) => {
   const versus = players.length === 1;
   const [localConfigs, setLocalConfigs] = useState(aiConfigs);
@@ -300,14 +310,34 @@ const AiConfigModal = ({
       <motion.div 
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
-        className={cn("bg-[#E4E3E0] border-2 border-[#141414] p-8 w-full max-h-full overflow-y-auto shadow-2xl flex flex-col gap-6", versus ? "max-w-md" : "max-w-2xl")}
+        className={cn("bg-[#E4E3E0] border-2 border-[#141414] p-5 sm:p-8 w-full max-h-full overflow-y-auto shadow-2xl flex flex-col gap-5 sm:gap-6", versus ? "max-w-md" : "max-w-2xl")}
       >
         <div className="flex justify-between items-center border-b border-[#141414] pb-4">
-          <h2 className="text-2xl font-bold uppercase tracking-tight">{versus ? 'Your Opponent' : 'AI General Configuration'}</h2>
+          <h2 className="text-xl sm:text-2xl font-bold uppercase tracking-tight">{versus ? 'Your Opponent' : 'AI General Configuration'}</h2>
           <button onClick={onClose} className="hover:rotate-90 transition-transform">
             <X size={24} />
           </button>
         </div>
+
+        {versus && onAiPlayerChange && (
+          <div className="space-y-1">
+            <label className="text-[10px] uppercase font-bold opacity-60">You command</label>
+            <div className="grid grid-cols-2 border border-[#141414]" role="radiogroup" aria-label="Your side">
+              {[1, 2].map(human => (
+                <button
+                  key={human}
+                  role="radio"
+                  aria-checked={players[0] !== human}
+                  onClick={() => onAiPlayerChange(3 - human)}
+                  className={cn("p-2 text-left transition-all", players[0] !== human ? "bg-[#141414] text-[#E4E3E0]" : "bg-white hover:bg-[#141414]/10")}
+                >
+                  <span className="block text-xs font-bold uppercase">Player {human} · {NATIONS[nations[human]].adjective}</span>
+                  <span className="block text-[9px] font-mono uppercase opacity-60">{human === 1 ? 'South, moves first' : 'North, moves second'}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className={cn("grid grid-cols-1 gap-8", !versus && "md:grid-cols-2")}>
           {players.map(playerNum => {
@@ -477,8 +507,32 @@ const AiConfigModal = ({
   );
 };
 
+/**
+ * Added to the field manual for an AI general facing a human (Human vs AI only, so AI vs AI
+ * games stay a clean comparison of the models).
+ */
+const VERSUS_BRIEFING = `
+
+## 8. Against a human commander
+
+In this battle your opponent is a human general, who will punish any regiment you leave idle. Every turn:
+- Give every regiment an order: march, attack, turn to face, entrench, form square or raise palisades. If you mean a regiment to stay where it is, order \`hold <id>\` (free; it can still fight) so the choice is deliberate.
+- Each of your replies shows a ROLL CALL of the regiments you have not used yet this turn, with the enemies each can engage now and the nearest enemy. \`ls idle\` shows the same list at any time.
+- Your \`end\` is refused while any regiment is unaccounted for, except on your fifth and last reply. Use your replies to work through the roll call.
+- Do not forget your cavalry. Hussars and chasseurs have 6 MP: every turn, send them round the flanks, after enemy light infantry and cannon, into the flank of line infantry, or toward the enemy Command Center.
+- Reinforcements count too: from the turn after they arrive, march them to the fight.`;
+
 /** CLI commands that only show information, so they also work on an AI general's turn. */
-const READ_ONLY_COMMANDS = new Set(['help', 'status', 'whoami', 'ls', 'export', 'clear']);
+/** Human vs AI: the AI general's regiments not yet used this turn, shown with every reply. */
+const rollCall = (state: GameState, lastIteration: boolean) => {
+  const idle = idleRegiments(state, state.currentPlayer);
+  if (!idle.length) return '\nROLL CALL: every regiment has acted or been told to hold. Finish with `end` once you are done.';
+  return `\nROLL CALL (\`ls idle\`): ${idle.length} regiment${idle.length === 1 ? '' : 's'} not yet used this turn. Give each an order or \`hold\` it; ` +
+    (lastIteration ? 'this is your last reply, so the turn ends whatever you leave undone.' : '`end` is refused while any remain.') +
+    '\n' + idle.map(r => `- ${describeIdle(state, r)}`).join('\n');
+};
+
+const READ_ONLY_COMMANDS = new Set(['help', 'status', 'whoami', 'ls', 'idle', 'export', 'clear']);
 
 export default function App() {
   const [gameState, setGameState] = useState<GameState>(getInitialState());
@@ -486,8 +540,11 @@ export default function App() {
   const [mapRotation, setMapRotation] = useState(0);
   const [commandInput, setCommandInput] = useState('');
   const [commandError, setCommandError] = useState<string | null>(null);
-  const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(true);
-  const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(true);
+  // On a phone the side panels float over the map, so they start closed there.
+  const compact = useCompact();
+  const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(() => !startsCompact());
+  const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(() => !startsCompact());
+  const [menuOpen, setMenuOpen] = useState(false);
   const [isAiThinking, setIsAiThinking] = useState(false);
   const [aiMonologue, setAiMonologue] = useState<string | null>(null);
   const [dispatchExpanded, setDispatchExpanded] = useState(false);
@@ -502,6 +559,12 @@ export default function App() {
   const [showAiConfig, setShowAiConfig] = useState(false);
   // Which battle the start screen's AI settings will begin: AI vs AI, or you against one AI.
   const [aiSetupMode, setAiSetupMode] = useState<'ai' | 'versus'>('ai');
+  // Human vs AI: the player the AI general commands (you take the other).
+  const [versusAiPlayer, setVersusAiPlayer] = useState(VERSUS_AI_PLAYER);
+  // The map code on the start screen; the same code always gives the same battlefield.
+  const [seedInput, setSeedInput] = useState(randomSeed);
+  const [reportHidden, setReportHidden] = useState(false);
+  const [battleHistory, setBattleHistory] = useState<BattleRecord[]>(loadBattles);
   const [isArchiveOpen, setIsArchiveOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'3d' | '2d'>(() => {
     try {
@@ -553,10 +616,39 @@ export default function App() {
   }, [p1Nation]);
 
   /** Fresh battle with the chosen armies (the map is regenerated too). */
-  const startGame = (mode: GameMode, aiConfigs: { [key: number]: AiConfig }) => {
+  /**
+   * Fresh battle on the map code from the start screen (or the one given), with the chosen
+   * armies. In Human vs AI the view starts from your side of the field.
+   */
+  const startGame = (mode: GameMode, aiConfigs: { [key: number]: AiConfig }, opts: { seed?: string; nations?: { [player: number]: Nation }; aiPlayer?: number } = {}) => {
+    battleRef.current++;
     aiTurnRef.current = null;
-    setMapRotation(0);
-    setGameState({ ...getInitialState(nationsFor(p1Nation)), gameMode: mode, aiConfigs });
+    setIsAiThinking(false);
+    setAiMonologue(null);
+    setAiPaused(false);
+    setAiStalled(false);
+    setReportHidden(false);
+    const seed = opts.seed ?? (normalizeSeed(seedInput) || randomSeed());
+    const aiPlayer = mode === 'versus' ? opts.aiPlayer ?? versusAiPlayer : undefined;
+    setMapRotation(aiPlayer === 1 ? 180 : 0);
+    setGameState({ ...getInitialState(opts.nations ?? nationsFor(p1Nation), seed), gameMode: mode, aiConfigs, aiPlayer });
+  };
+
+  /**
+   * The same map again. Swapping sides gives each general the other army's starting
+   * position and turn order; each keeps its own army (and, against an AI, you keep yours).
+   */
+  const rematch = (swapSides: boolean) => {
+    const s = gameState;
+    if (!s.gameMode) return;
+    function flip<T>(o: { [player: number]: T }): { [player: number]: T } {
+      return swapSides ? { 1: o[2], 2: o[1] } : o;
+    }
+    const nations = flip<Nation>(s.nations);
+    const aiPlayer = s.gameMode === 'versus' ? (swapSides ? humanPlayerOf(s) : aiPlayerOf(s)) : undefined;
+    setP1Nation(nations[1]);
+    if (aiPlayer) setVersusAiPlayer(aiPlayer);
+    startGame(s.gameMode, flip<AiConfig>(s.aiConfigs), { seed: s.seed, nations, aiPlayer });
   };
 
   useEffect(() => {
@@ -578,7 +670,11 @@ export default function App() {
     stateStr += `Current Player: Player ${state.currentPlayer}\n`;
     stateStr += `Supply: P1: ${state.supply[1]}, P2: ${state.supply[2]}\n`;
     stateStr += `Reinforcement costs: ${Object.entries(UNIT_COSTS).map(([t, c]) => `${t} ${c}`).join(', ')}\n`;
-    stateStr += `Capture Point (10:10): ${state.capturePointOwner ? `Owned by P${state.capturePointOwner} (${state.capturePointTurns}/5 turns)` : 'Uncaptured'}\n\n`;
+    stateStr += `Capture Point (10:10): ${state.capturePointOwner ? `Owned by P${state.capturePointOwner} (${state.capturePointTurns}/5 turns)` : 'Uncaptured'}\n`;
+    stateStr += `Strength: ${[1, 2].map(p => {
+      const s = sideStats(state, p);
+      return `P${p} ${s.regiments} regiments, ${s.men} men (lost ${s.lostRegiments} regiments, ${s.lostMen} men)`;
+    }).join(' | ')}\n\n`;
 
     // Objectives and terrain, so a general never has to spend an iteration on reconnaissance.
     const tiles = state.map.flat();
@@ -653,6 +749,32 @@ export default function App() {
   // On an AI general's turn a person can look over the field, but not give orders.
   const humanTurn = !isAiPlayer(gameState, gameState.currentPlayer);
   const commandable = (r: Regiment | undefined): r is Regiment => !!r && humanTurn && r.owner === gameState.currentPlayer;
+
+  // Becoming compact (a phone rotated, a window narrowed) closes the panels, which would cover the map.
+  useEffect(() => {
+    if (!compact) return;
+    setIsLeftSidebarOpen(false);
+    setIsRightSidebarOpen(false);
+  }, [compact]);
+
+  // On a phone, the end of a battle clears the panels so the report and the field are in view.
+  useEffect(() => {
+    if (compact && gameState.winner) {
+      setIsLeftSidebarOpen(false);
+      setIsRightSidebarOpen(false);
+    }
+  }, [compact, gameState.winner]);
+
+  /** Opens or closes a side panel; on a phone only one is open at a time. */
+  const togglePanel = (which: 'left' | 'right') => {
+    const open = which === 'left' ? !isLeftSidebarOpen : !isRightSidebarOpen;
+    if (which === 'left') setIsLeftSidebarOpen(open); else setIsRightSidebarOpen(open);
+    if (compact && open) (which === 'left' ? setIsRightSidebarOpen : setIsLeftSidebarOpen)(false);
+  };
+  const closePanels = () => {
+    setIsLeftSidebarOpen(false);
+    setIsRightSidebarOpen(false);
+  };
 
   const handleTileClick = (x: number, y: number) => {
     if (gameState.winner) return;
@@ -832,6 +954,7 @@ export default function App() {
     const { damage: actualDamage, counterDamage: actualCounterDamage, bayonet } = resolveAttack(attacker, defender, gameState.map);
 
     setGameState(prev => {
+      const tally = bumpTally(prev.tally, attacker.owner, { attacks: 1, charges: bayonet ? 1 : 0 });
       let newRegiments = prev.regiments.map(r => {
         if (r.id === defender.id) {
           return { ...r, men: Math.max(0, r.men - actualDamage) };
@@ -850,7 +973,7 @@ export default function App() {
       if (p1Units.length === 0) winner = 2;
       else if (p2Units.length === 0) winner = 1;
 
-      return { ...prev, regiments: newRegiments, winner };
+      return { ...prev, regiments: newRegiments, winner, tally };
     });
 
     addAnimation({ type: 'attack', fromX: attacker.x, fromY: attacker.y, toX: defender.x, toY: defender.y, unitType: attacker.type, bayonet });
@@ -988,7 +1111,8 @@ export default function App() {
         [prev.currentPlayer]: prev.supply[prev.currentPlayer] - cost
       },
       regiments: [...prev.regiments, newUnit],
-      idCounters
+      idCounters,
+      tally: bumpTally(prev.tally, prev.currentPlayer, { raised: 1, raisedMen: newUnit.men, supplySpent: cost }),
     }));
 
     addBattlefieldLog(`Reinforcements arrived: ${newUnit.name} at (${emptyNeighbor.x}, ${emptyNeighbor.y}).`);
@@ -1024,9 +1148,13 @@ export default function App() {
     }
 
     const supplyGain = (hasCC ? SUPPLY_PER_TURN : 0) + (supplyNodesCount * SUPPLY_NODE_BONUS);
+    let tally = bumpTally(prev.tally, nextPlayer, { supplyEarned: supplyGain });
+    if (newCapturePointTurns > prev.capturePointTurns) tally = bumpTally(tally, prev.currentPlayer, { capturePointTurns: 1 });
 
     return {
       ...prev,
+      tally,
+      timeline: [...prev.timeline, snapshot(prev, prev.turn, prev.currentPlayer)],
       currentPlayer: nextPlayer,
       turn: isNewTurn ? prev.turn + 1 : prev.turn,
       selectedUnitId: null,
@@ -1039,7 +1167,8 @@ export default function App() {
       regiments: prev.regiments.map(r => ({
         ...r,
         mp: r.maxMp,
-        hasAttacked: false
+        hasAttacked: false,
+        holding: false
       })),
       cliHistory: []
     };
@@ -1055,8 +1184,13 @@ export default function App() {
     });
   };
 
-  const applyCommands = (state: GameState, cmd: string): { newState: GameState, logs: string[], cli: string[], error: string | null } => {
+  /**
+   * Runs CLI commands against a state. `finalIteration` tells it an AI general is on its
+   * last reply of the turn, when its `end` always goes through.
+   */
+  const applyCommands = (state: GameState, cmd: string, opts: { finalIteration?: boolean } = {}): { newState: GameState, logs: string[], cli: string[], error: string | null } => {
     let currentState = { ...state, animations: [] };
+    const commander = state.currentPlayer;
     let logsToAdd: string[] = [];
     let cliToAdd: string[] = [];
     let error: string | null = null;
@@ -1082,6 +1216,16 @@ export default function App() {
       localAddCliOutput(`> ${cleanLine}`);
 
       if (action === 'end') {
+        // Against a human, the AI general may not end its turn with regiments forgotten:
+        // it gets the roll call back and uses its next reply to give them orders (or `hold`).
+        const idle = currentState.gameMode === 'versus' && isAiPlayer(currentState, currentState.currentPlayer) && !opts.finalIteration
+          ? idleRegiments(currentState, currentState.currentPlayer)
+          : [];
+        if (idle.length) {
+          localAddCliOutput(`TURN NOT ENDED: ${idle.length} regiment${idle.length === 1 ? ' has' : 's have'} neither moved nor fought this turn. Give each an order (march, attack, turn, entrench, square), or \`hold <id>\` to keep it in place on purpose, then \`end\` again:`);
+          idle.forEach(r => localAddCliOutput(`- ${describeIdle(currentState, r)}`));
+          break;
+        }
         currentState = processEndTurn(currentState);
         currentState.battlefieldLogs = [`Turn ${currentState.turn}: Player ${currentState.currentPlayer}'s turn.`, ...currentState.battlefieldLogs].slice(0, 20);
         localAddCliOutput("Turn ended by command.");
@@ -1089,7 +1233,7 @@ export default function App() {
       }
 
       if (action === 'help') {
-        localAddCliOutput("Commands: ls [all|types|map|supply|info <id>|tile <x>:<y>|costs], whoami, status, mv <id> <x>:<y>, eg <id> <targetId>, ent <id>, rtr <id>, rtl <id>, rlt <id>, box <id>, pal <id>, sel <id>, spawn <type>, end, clear, help, export");
+        localAddCliOutput("Commands: ls [all|idle|types|map|supply|info <id>|tile <x>:<y>|costs], whoami, status, mv <id> <x>:<y>, eg <id> <targetId>, ent <id>, rtr <id>, rtl <id>, rlt <id>, box <id>, pal <id>, hold <id>, sel <id>, spawn <type>, end, clear, help, export");
         continue;
       }
 
@@ -1117,6 +1261,17 @@ export default function App() {
       if (action === 'clear') {
         currentState.cliHistory = [];
         currentState.battlefieldLogs = [];
+        continue;
+      }
+
+      if (action === 'idle' || (action === 'ls' && parts[1] === 'idle')) {
+        const idle = idleRegiments(currentState, currentState.currentPlayer);
+        if (!idle.length) {
+          localAddCliOutput("Every regiment has moved, fought, dug in, formed square or been told to hold.");
+        } else {
+          localAddCliOutput(`--- Regiments not yet used this turn (${idle.length}) ---`);
+          idle.forEach(r => localAddCliOutput(describeIdle(currentState, r)));
+        }
         continue;
       }
 
@@ -1185,6 +1340,7 @@ export default function App() {
         newUnit.mp = 0; newUnit.hasAttacked = true;
         currentState.regiments = [...currentState.regiments, newUnit];
         currentState.supply = { ...currentState.supply, [currentState.currentPlayer]: currentState.supply[currentState.currentPlayer] - cost };
+        currentState.tally = bumpTally(currentState.tally, currentState.currentPlayer, { raised: 1, raisedMen: newUnit.men, supplySpent: cost });
         localAddBattlefieldLog(`Reinforcements arrived: ${newUnit.name} at (${emptyNeighbor.x}, ${emptyNeighbor.y}).`);
         continue;
       }
@@ -1198,6 +1354,11 @@ export default function App() {
         case 'sel':
           currentState.selectedUnitId = unit.id;
           localAddCliOutput(`Selected [${unit.id}] ${unit.name}.`);
+          break;
+        case 'hold':
+          // A deliberate choice to keep a regiment where it is; it still may fight this turn.
+          currentState.regiments = currentState.regiments.map(r => r.id === unit.id ? { ...r, holding: true } : r);
+          localAddCliOutput(`[${unit.id}] holds its ground this turn.`);
           break;
         case 'mv': {
           const coords = parts[2]?.split(':');
@@ -1304,6 +1465,7 @@ export default function App() {
             if (r.id === unit.id) return { ...r, men: Math.max(0, r.men - actualCounterDamage), hasAttacked: true, mp: Math.max(0, r.mp - 1) };
             return r;
           }).filter(r => r.men > 0);
+          currentState.tally = bumpTally(currentState.tally, unit.owner, { attacks: 1, charges: bayonet ? 1 : 0 });
 
           // Add animations
           const timestamp = Date.now();
@@ -1404,6 +1566,8 @@ export default function App() {
       }
     }
 
+    if (error) currentState.tally = bumpTally(currentState.tally, commander, { ordersRejected: 1 });
+
     return {
       newState: {
         ...currentState,
@@ -1487,7 +1651,7 @@ export default function App() {
         apiKey,
         model,
         thinkingLevel,
-        systemInstruction: aiInstructions,
+        systemInstruction: aiInstructions + (gameState.gameMode === 'versus' ? VERSUS_BRIEFING : ''),
         useVertexAI: config.useVertexAI,
       });
       session = chat;
@@ -1536,7 +1700,7 @@ You are Player ${currentGameState.currentPlayer} (${NATIONS[nationOf(currentGame
 Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE code block with your commands.
 - The commands run in order, and you will see their results in the next iteration.
 - Every regiment's MP refills each turn, and MP you leave unused is lost.
-- \`end\` ends your turn at once and any command after it is ignored. ${lastIteration ? 'This is your last iteration: finish with `end`.' : 'Add it as the last command only once every regiment has done what you want this turn.'}${unusedNote}
+- \`end\` ends your turn at once and any command after it is ignored. ${lastIteration ? 'This is your last iteration: finish with `end`.' : 'Add it as the last command only once every regiment has done what you want this turn.'}${currentGameState.gameMode === 'versus' ? rollCall(currentGameState, lastIteration) : unusedNote}
 `;
 
         let response;
@@ -1610,7 +1774,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
           // Fallback: try to find lines that look like commands in the whole text
           // This handles cases where the AI forgets triple backticks
           const lines = responseText.split('\n');
-          const commandKeywords = ['mv', 'eg', 'ent', 'rtr', 'rtl', 'rlt', 'rtn', 'rte', 'rts', 'rtw', 'box', 'pal', 'sel', 'spawn', 'end', 'ls', 'whoami', 'status', 'help', 'clear'];
+          const commandKeywords = ['mv', 'eg', 'ent', 'rtr', 'rtl', 'rlt', 'rtn', 'rte', 'rts', 'rtw', 'box', 'pal', 'hold', 'sel', 'spawn', 'end', 'ls', 'idle', 'whoami', 'status', 'help', 'clear'];
           commands = lines.filter(line => {
             const trimmed = line.trim();
             if (!trimmed || trimmed.startsWith('#')) return false;
@@ -1631,7 +1795,8 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
             if (!trimmedCmd || trimmedCmd.startsWith('#')) continue;
 
             // Execute one command
-            const { newState, logs, cli, error } = applyCommands(currentGameState, trimmedCmd);
+            const before = currentGameState;
+            const { newState, logs, cli, error } = applyCommands(currentGameState, trimmedCmd, { finalIteration: lastIteration });
             
             currentGameState = newState;
             setGameState(newState); // Update UI immediately
@@ -1644,10 +1809,13 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
               // Continue to next command instead of breaking
             }
 
-            if (trimmedCmd.toLowerCase() === 'end') {
+            // The turn is over once play passes (or the battle is won). An `end` the game
+            // postponed (regiments left idle against a human) closes this reply instead.
+            if (newState.currentPlayer !== before.currentPlayer || newState.turn !== before.turn || newState.winner) {
               turnEnded = true;
               break;
             }
+            if (/^end\b/i.test(trimmedCmd)) break;
 
             await new Promise(resolve => setTimeout(resolve, 800));
           }
@@ -1670,9 +1838,9 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
 
       // Final safety check: if the turn hasn't ended after all iterations, force an end
       // This prevents the game from getting stuck if the AI fails to issue 'end'
-      if (live() && currentGameState.currentPlayer === gameState.currentPlayer && !gameState.winner) {
+      if (live() && currentGameState.currentPlayer === gameState.currentPlayer && !currentGameState.winner) {
         addBattlefieldLog(`AI Player ${currentGameState.currentPlayer} turn timed out. Forcing end.`);
-        const { newState } = applyCommands(currentGameState, 'end');
+        const { newState } = applyCommands(currentGameState, 'end', { finalIteration: true });
         setGameState(newState);
       }
 
@@ -1708,7 +1876,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
   }, [aiInstructions, getGameStateString, gameState, executeCommand]);
 
   useEffect(() => {
-    if (isAiPlayer({ gameMode: gameState.gameMode }, gameState.currentPlayer) && !gameState.winner && !isAiThinking && !aiPaused && !aiStalled) {
+    if (isAiPlayer({ gameMode: gameState.gameMode, aiPlayer: gameState.aiPlayer }, gameState.currentPlayer) && !gameState.winner && !isAiThinking && !aiPaused && !aiStalled) {
       // Check if we've already started processing this turn/player
       if (aiTurnRef.current?.turn === gameState.turn && aiTurnRef.current?.player === gameState.currentPlayer) {
         return;
@@ -1721,7 +1889,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
       }, 1000);
       return () => clearTimeout(timer);
     }
-  }, [gameState.gameMode, gameState.currentPlayer, gameState.winner, gameState.turn, isAiThinking, aiPaused, aiStalled, runAiTurn]);
+  }, [gameState.gameMode, gameState.aiPlayer, gameState.currentPlayer, gameState.winner, gameState.turn, isAiThinking, aiPaused, aiStalled, runAiTurn]);
 
   /** Runs the current AI general's turn again after it failed, from where it stopped. */
   const retryAiTurn = () => {
@@ -1738,6 +1906,8 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
     setAiMonologue(null);
     setAiPaused(false);
     setAiStalled(false);
+    setReportHidden(false);
+    setSeedInput(randomSeed());
     setGameState(prev => ({ ...getInitialState(), aiConfigs: prev.aiConfigs }));
   };
 
@@ -1745,8 +1915,39 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
     if (window.confirm('Abandon this battle and return to the start screen?')) resetGame();
   };
 
+  // Each finished battle is recorded once, so rematches on the same map can be compared.
+  useEffect(() => {
+    if (!gameState.winner || battleHistory.some(b => b.battleId === gameState.battleId)) return;
+    const record = recordBattle(gameState);
+    if (record) setBattleHistory(saveBattle(record));
+  }, [gameState.winner, gameState.battleId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** The battle report as JSON: result, each side's account, strength turn by turn, and the generals' dispatches. */
+  const exportReport = () => {
+    const s = gameState;
+    const report = {
+      game: 'Regiments',
+      seed: s.seed,
+      mode: s.gameMode,
+      turns: s.turn,
+      winner: s.winner,
+      victory: victoryReason(s),
+      sides: [1, 2].map(p => ({ player: p, nation: nationOf(s, p), general: generalOf(s, p), ...sideStats(s, p) })),
+      timeline: s.timeline,
+      dispatches: s.monologueHistory,
+      battlefieldLog: s.battlefieldLogs,
+    };
+    const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `regiments_report_${s.seed}_turn_${s.turn}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const exportLogs = () => {
-    const content = `--- BATTLEFIELD LOGS ---\n${gameState.battlefieldLogs.join('\n')}\n\n--- CLI HISTORY ---\n${gameState.cliHistory.join('\n')}`;
+    const content = `--- MAP ${gameState.seed} ---\n\n--- BATTLEFIELD LOGS ---\n${gameState.battlefieldLogs.join('\n')}\n\n--- CLI HISTORY ---\n${gameState.cliHistory.join('\n')}`;
     const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1758,10 +1959,11 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
 
   if (gameState.gameMode === null) {
     return (
-      <div className="fixed inset-0 bg-[#E4E3E0] flex items-center justify-center z-50 p-8">
-        <div className="max-w-2xl w-full border border-[#141414] p-12 bg-white shadow-2xl flex flex-col gap-8">
+      <div className="fixed inset-0 bg-[#E4E3E0] flex overflow-y-auto z-50 p-3 sm:p-8">
+        {/* m-auto centres the card when it fits and lets it scroll from the top when it does not (a phone held sideways) */}
+        <div className="m-auto max-w-2xl w-full border border-[#141414] p-5 sm:p-12 [@media(max-height:560px)]:p-5 bg-white shadow-2xl flex flex-col gap-6 sm:gap-8 [@media(max-height:560px)]:gap-5">
           <div className="text-center space-y-2">
-            <h1 className="text-6xl font-serif italic tracking-tighter leading-none">REGIMENTS</h1>
+            <h1 className="text-4xl sm:text-6xl [@media(max-height:560px)]:text-4xl font-serif italic tracking-tighter leading-none">REGIMENTS</h1>
           </div>
           
           <div className="space-y-3">
@@ -1791,10 +1993,43 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
             </p>
           </div>
 
+          <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-5 border border-[#141414]/15 p-4">
+            {(() => {
+              const code = normalizeSeed(seedInput);
+              const preview = code ? getInitialState(nationsFor(p1Nation), code) : null;
+              return preview
+                ? <MapPreview map={preview.map} regiments={preview.regiments} nations={preview.nations} size={112} />
+                : <div className="w-[112px] h-[112px] shrink-0 border border-dashed border-[#141414]/30 flex items-center justify-center text-[9px] font-mono uppercase opacity-50 text-center p-2">Random map</div>;
+            })()}
+            <div className="flex-1 space-y-2">
+              <label htmlFor="map-code" className="block text-[10px] uppercase tracking-widest font-mono opacity-50">Map code</label>
+              <div className="flex gap-2">
+                <input
+                  id="map-code"
+                  value={seedInput}
+                  onChange={e => setSeedInput(normalizeSeed(e.target.value))}
+                  placeholder="Random"
+                  spellCheck={false}
+                  className="w-36 px-3 py-2 border border-[#141414] font-mono text-lg font-bold tracking-[0.2em] uppercase bg-white outline-none focus:ring-1 focus:ring-[#141414]"
+                />
+                <button
+                  onClick={() => setSeedInput(randomSeed())}
+                  className="px-3 border border-[#141414] text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
+                  title="Roll a new map"
+                >
+                  <Shuffle size={14} /> New map
+                </button>
+              </div>
+              <p className="text-[10px] font-mono opacity-50 leading-snug">
+                The same code always gives the same battlefield. Note it to replay a map, or to pit two generals on it from both sides.
+              </p>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <button 
               onClick={() => startGame('manual', gameState.aiConfigs)}
-              className="p-6 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex flex-col items-center gap-4 group"
+              className="p-4 sm:p-6 [@media(max-height:560px)]:p-3 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex flex-col items-center gap-3 sm:gap-4 group"
             >
               <Users size={44} className="group-hover:scale-110 transition-transform" />
               <div className="text-center">
@@ -1805,18 +2040,18 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
 
             <button 
               onClick={() => { setAiSetupMode('versus'); setShowAiConfig(true); }}
-              className="p-6 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex flex-col items-center gap-4 group"
+              className="p-4 sm:p-6 [@media(max-height:560px)]:p-3 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex flex-col items-center gap-3 sm:gap-4 group"
             >
               <Swords size={44} className="group-hover:scale-110 transition-transform" />
               <div className="text-center">
                 <h2 className="text-lg font-bold uppercase">Human vs AI</h2>
-                <p className="text-[10px] uppercase opacity-50 font-mono mt-1">You command Player 1 against an AI General</p>
+                <p className="text-[10px] uppercase opacity-50 font-mono mt-1">You command one army against an AI General</p>
               </div>
             </button>
             
             <button 
               onClick={() => { setAiSetupMode('ai'); setShowAiConfig(true); }}
-              className="p-6 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex flex-col items-center gap-4 group"
+              className="p-4 sm:p-6 [@media(max-height:560px)]:p-3 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex flex-col items-center gap-3 sm:gap-4 group"
             >
               <Terminal size={44} className="group-hover:scale-110 transition-transform" />
               <div className="text-center">
@@ -1831,7 +2066,8 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
             onClose={() => setShowAiConfig(false)}
             aiConfigs={gameState.aiConfigs}
             nations={nationsFor(p1Nation)}
-            players={aiSetupMode === 'versus' ? [VERSUS_AI_PLAYER] : [1, 2]}
+            players={aiSetupMode === 'versus' ? [versusAiPlayer] : [1, 2]}
+            onAiPlayerChange={setVersusAiPlayer}
             onSave={(configs) => {
               startGame(aiSetupMode, configs);
               setShowAiConfig(false);
@@ -1847,8 +2083,81 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
   }
 
   return (
-    <div className="h-screen flex flex-col bg-[#E4E3E0] text-[#141414] font-sans selection:bg-[#141414] selection:text-[#E4E3E0] overflow-hidden">
-      {/* Header */}
+    <div className="h-dvh flex flex-col bg-[#E4E3E0] text-[#141414] font-sans selection:bg-[#141414] selection:text-[#E4E3E0] overflow-hidden">
+      {/* Header: one slim row on a phone, with the less used controls in a menu */}
+      {compact ? (
+      <header className="border-b border-[#141414] px-2 py-1 flex items-center gap-2 relative z-[85] bg-[#E4E3E0]">
+        <h1 className="hidden sm:block text-lg font-bold tracking-tighter uppercase italic font-serif shrink-0">Regiments</h1>
+        <div className="flex-1 min-w-0 flex items-center gap-3 overflow-x-auto">
+          <div className="leading-tight shrink-0">
+            <p className={cn("text-sm font-bold uppercase whitespace-nowrap", side(gameState.currentPlayer).text)}>
+              P{gameState.currentPlayer} · {NATIONS[nationOf(gameState, gameState.currentPlayer)].adjective}
+            </p>
+            <p className="text-[9px] font-mono uppercase opacity-60 whitespace-nowrap flex items-center gap-1">
+              {isAiThinking && <Cpu size={9} className="animate-spin" />}
+              {!humanTurn ? describeModel(gameState.aiConfigs[gameState.currentPlayer]) : gameState.gameMode === 'versus' ? 'Your command' : 'To move'}
+            </p>
+          </div>
+          {[
+            { label: 'Supply', value: String(gameState.supply[gameState.currentPlayer]), cls: side(gameState.currentPlayer).textSoft },
+            { label: 'Center', value: gameState.capturePointOwner ? `${gameState.capturePointTurns}/5` : '---', cls: gameState.capturePointOwner ? side(gameState.capturePointOwner).text : 'opacity-30' },
+            { label: 'Turn', value: String(gameState.turn), cls: '' },
+          ].map(st => (
+            <div key={st.label} className="leading-tight shrink-0 text-center">
+              <p className="text-[8px] uppercase font-mono opacity-50">{st.label}</p>
+              <p className={cn("text-sm font-bold font-mono", st.cls)}>{st.value}</p>
+            </div>
+          ))}
+        </div>
+        {aiStalled && !humanTurn && !gameState.winner && (
+          <button onClick={retryAiTurn} className="h-9 px-2 border border-red-700 text-red-700 text-[9px] font-bold uppercase flex items-center gap-1 shrink-0" title="The AI general's turn failed. Run it again.">
+            <RotateCcw size={14} /> Retry
+          </button>
+        )}
+        {(gameState.gameMode === 'ai' || gameState.gameMode === 'versus') && (
+          <button
+            onClick={() => setAiPaused(p => !p)}
+            className={cn("h-9 w-9 border border-[#141414] flex items-center justify-center shrink-0", aiPaused && "bg-[#141414] text-[#E4E3E0]")}
+            title={aiPaused ? 'Resume the AI generals' : 'Pause the AI generals after the current turn'}
+            aria-label={aiPaused ? 'Resume AI' : 'Pause AI'}
+          >
+            {aiPaused ? <Play size={16} /> : <Pause size={16} />}
+          </button>
+        )}
+        <button
+          onClick={() => setMenuOpen(o => !o)}
+          className={cn("h-9 w-9 border border-[#141414] flex items-center justify-center shrink-0", menuOpen && "bg-[#141414] text-[#E4E3E0]")}
+          aria-label="Menu"
+          aria-expanded={menuOpen}
+        >
+          <EllipsisVertical size={16} />
+        </button>
+        {menuOpen && (
+          <>
+            <div className="fixed inset-0 z-[86]" onClick={() => setMenuOpen(false)} />
+            <div className="absolute right-2 top-full mt-1 z-[87] w-60 bg-[#E4E3E0] border border-[#141414] shadow-2xl p-2 space-y-2">
+              <div className="grid grid-cols-2 border border-[#141414]" role="group" aria-label="Battlefield view">
+                {(['3d', '2d'] as const).map(mode => (
+                  <button
+                    key={mode}
+                    onClick={() => { setViewMode(mode); setMenuOpen(false); }}
+                    className={cn("py-2.5 flex items-center justify-center gap-1.5 text-[10px] uppercase font-bold", viewMode === mode ? "bg-[#141414] text-[#E4E3E0]" : "bg-white")}
+                  >
+                    {mode === '3d' ? <Box size={14} /> : <LayoutGrid size={14} />} {mode === '3d' ? '3D field' : '2D map'}
+                  </button>
+                ))}
+              </div>
+              <button onClick={() => { setShowAiConfig(true); setMenuOpen(false); }} className="w-full py-2.5 px-3 border border-[#141414] bg-white text-[10px] uppercase font-bold flex items-center gap-2">
+                <Settings size={14} /> AI settings
+              </button>
+              <button onClick={() => { setMenuOpen(false); abandonBattle(); }} className="w-full py-2.5 px-3 border border-[#141414] bg-white text-[10px] uppercase font-bold flex items-center gap-2">
+                <RotateCcw size={14} /> Abandon battle
+              </button>
+            </div>
+          </>
+        )}
+      </header>
+      ) : (
       <header className="border-b border-[#141414] p-4 flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold tracking-tighter uppercase italic font-serif">Regiments</h1>
@@ -1981,6 +2290,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
           </button>
         </div>
       </header>
+      )}
 
       <main className="flex-1 flex overflow-hidden relative">
         {/* With the HUD column hidden, the AI general's dispatch floats as a compact card in the
@@ -1995,7 +2305,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
               onClick={() => setDispatchMinimized(false)}
               className={cn(
                 "absolute z-[60] top-4 px-3 py-2 border-2 bg-white/90 backdrop-blur-sm shadow-lg flex items-center gap-2 font-bold uppercase text-[9px] tracking-wider",
-                "right-4",
+                compact ? "right-2 top-14" : "right-4",
                 side(gameState.currentPlayer).bubble
               )}
               aria-label="Show the AI general's dispatch"
@@ -2010,8 +2320,8 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               className={cn(
-                "absolute z-[60] top-4 w-[min(380px,calc(100%-2rem))] border-2 bg-white/90 backdrop-blur-sm shadow-xl",
-                "right-4",
+                "absolute z-[60] top-4 w-[min(380px,calc(100%-1rem))] border-2 bg-white/90 backdrop-blur-sm shadow-xl",
+                compact ? "right-2 top-14" : "right-4",
                 side(gameState.currentPlayer).bubble
               )}
             >
@@ -2038,17 +2348,30 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
           ))}
         </AnimatePresence>
 
+        {compact && (isLeftSidebarOpen || isRightSidebarOpen) && (
+          <div className="absolute inset-0 z-[70] bg-[#141414]/30" onClick={closePanels} aria-hidden />
+        )}
+
         {/* Sidebar Left: Unit Info */}
         <AnimatePresence>
           {isLeftSidebarOpen && (
             <motion.aside 
-              initial={{ width: 0, opacity: 0 }}
-              animate={{ width: 320, opacity: 1 }}
-              exit={{ width: 0, opacity: 0 }}
-              transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-              className="border-r border-[#141414] flex flex-col gap-6 overflow-hidden bg-[#E4E3E0] z-20"
+              initial={compact ? { x: '-100%' } : { width: 0, opacity: 0 }}
+              animate={compact ? { x: 0 } : { width: 320, opacity: 1 }}
+              exit={compact ? { x: '-100%' } : { width: 0, opacity: 0 }}
+              transition={compact ? { type: 'tween', duration: 0.2 } : { type: 'spring', stiffness: 300, damping: 30 }}
+              className={cn(
+                "border-r border-[#141414] flex flex-col gap-6 overflow-hidden bg-[#E4E3E0] z-20",
+                compact && "absolute inset-y-0 left-0 z-[75] shadow-2xl"
+              )}
             >
-              <div className="w-80 p-6 flex flex-col gap-6 overflow-y-auto h-full">
+              <div className={cn("flex flex-col gap-6 overflow-y-auto h-full", compact ? "w-[min(20rem,88vw)] p-4" : "w-80 p-6")}>
+                {compact && (
+                  <div className="flex items-center justify-between -mb-2">
+                    <p className="text-[10px] uppercase tracking-widest font-bold font-mono">Intel</p>
+                    <button onClick={closePanels} className="h-9 w-9 flex items-center justify-center border border-[#141414]" aria-label="Close Intel"><X size={16} /></button>
+                  </div>
+                )}
                 <section>
                   <h2 className="text-[11px] uppercase tracking-widest opacity-50 font-serif italic mb-4">Selected Regiment</h2>
                   <AnimatePresence mode="wait">
@@ -2217,6 +2540,11 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
                 </section>
 
                 <section>
+                  <h2 className="text-[11px] uppercase tracking-widest opacity-50 font-serif italic mb-3">Casualties</h2>
+                  <CasualtyPanel state={gameState} />
+                </section>
+
+                <section>
                   <h2 className="text-[11px] uppercase tracking-widest opacity-50 font-serif italic mb-4">Reinforcements</h2>
                   <div className="grid grid-cols-1 gap-2">
                     {(Object.keys(UNIT_COSTS) as UnitType[]).map(type => (
@@ -2262,7 +2590,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
         {/* Game Map */}
         <section className={cn(
           "flex-1 relative",
-          viewMode === '3d' ? "overflow-hidden bg-[#c9d2c6]" : "bg-[#D1D0CC] overflow-auto p-12 flex flex-col items-center"
+          viewMode === '3d' ? "overflow-hidden bg-[#c9d2c6]" : cn("bg-[#D1D0CC] overflow-auto flex flex-col items-start", compact ? "p-4" : "p-12")
         )}>
           {viewMode === '3d' ? (
             <Suspense fallback={
@@ -2274,6 +2602,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
                 gameState={gameState}
                 mapRotation={mapRotation}
                 aiMode={!humanTurn}
+                compact={compact}
                 onTileClick={handleTileClick3D}
                 onTileHover={setHoveredTile}
               />
@@ -2282,7 +2611,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
           <motion.div 
             animate={{ rotate: mapRotation }}
             transition={{ type: 'spring', stiffness: 100, damping: 20 }}
-            className="grid gap-0 border border-[#141414] shadow-2xl relative shrink-0"
+            className="grid gap-0 border border-[#141414] shadow-2xl relative shrink-0 mx-auto"
             style={{ 
               gridTemplateColumns: `repeat(${gameState.map[0].length}, ${TILE_SIZE}px)`,
               gridTemplateRows: `repeat(${gameState.map.length}, ${TILE_SIZE}px)`
@@ -2446,7 +2775,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
         onClose={() => setShowAiConfig(false)}
         aiConfigs={gameState.aiConfigs}
         nations={gameState.nations}
-        players={gameState.gameMode === 'versus' ? [VERSUS_AI_PLAYER] : [1, 2]}
+        players={gameState.gameMode === 'versus' ? [aiPlayerOf(gameState)] : [1, 2]}
         onSave={(configs) => {
           setGameState(prev => ({ ...prev, aiConfigs: configs }));
           setShowAiConfig(false);
@@ -2455,38 +2784,46 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
         }}
       />
 
-      {/* Winner Overlay */}
-          <AnimatePresence>
-            {gameState.winner && (
-              <motion.div 
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="absolute inset-0 bg-[#141414]/90 z-50 flex flex-col items-center justify-center text-[#E4E3E0] p-12 text-center"
-              >
-                <h2 className="text-6xl font-bold uppercase italic font-serif mb-4">Victory</h2>
-                <p className="text-2xl mb-8 uppercase tracking-widest">Player {gameState.winner} ({NATIONS[nationOf(gameState, gameState.winner)].adjective}) has conquered the field</p>
-                <button 
-                  onClick={resetGame}
-                  className="px-12 py-4 border border-[#E4E3E0] hover:bg-[#E4E3E0] hover:text-[#141414] transition-all uppercase font-bold tracking-widest"
-                >
-                  New Campaign
-                </button>
-              </motion.div>
-            )}
-          </AnimatePresence>
+      {/* End-of-battle report */}
+          {gameState.winner && !reportHidden && (
+            <BattleReport
+              state={gameState}
+              history={battleHistory}
+              onRematch={rematch}
+              onExport={exportReport}
+              onViewField={() => { setReportHidden(true); if (compact) closePanels(); }}
+              onNewCampaign={resetGame}
+            />
+          )}
+          {gameState.winner && reportHidden && (
+            <button
+              onClick={() => setReportHidden(false)}
+              className={cn("fixed z-[78] px-4 py-2.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 shadow-xl hover:bg-[#2a2a2a]", compact ? "top-14 right-2" : cn("top-24", isRightSidebarOpen ? "right-[17rem]" : "right-4"))}
+            >
+              <ClipboardList size={14} /> Battle report
+            </button>
+          )}
         </section>
 
         {/* Sidebar Right: Controls */}
         <AnimatePresence>
           {isRightSidebarOpen && (
             <motion.aside 
-              initial={{ width: 0, opacity: 0 }}
-              animate={{ width: 256, opacity: 1 }}
-              exit={{ width: 0, opacity: 0 }}
-              transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-              className="border-l border-[#141414] flex flex-col gap-8 overflow-hidden bg-[#E4E3E0] z-20"
+              initial={compact ? { x: '100%' } : { width: 0, opacity: 0 }}
+              animate={compact ? { x: 0 } : { width: 256, opacity: 1 }}
+              exit={compact ? { x: '100%' } : { width: 0, opacity: 0 }}
+              transition={compact ? { type: 'tween', duration: 0.2 } : { type: 'spring', stiffness: 300, damping: 30 }}
+              className={cn(
+                "border-l border-[#141414] flex flex-col gap-8 overflow-hidden bg-[#E4E3E0] z-20",
+                compact && "absolute inset-y-0 right-0 z-[75] shadow-2xl"
+              )}
             >
-              <div className="w-64 p-6 flex flex-col gap-8 h-full overflow-y-auto">
+              <div className={cn("flex flex-col h-full overflow-y-auto", compact ? "w-[min(18rem,88vw)] p-4 gap-6" : "w-64 p-6 gap-8")}>
+                {compact && (
+                  <div className="flex justify-end -mb-10 relative z-10">
+                    <button onClick={closePanels} className="h-9 w-9 flex items-center justify-center border border-[#141414]" aria-label="Close HUD"><X size={16} /></button>
+                  </div>
+                )}
                 <section>
                   <h2 className="text-[11px] uppercase tracking-widest opacity-50 font-serif italic mb-4">Tactical HUD</h2>
                   <div className="space-y-4">
@@ -2496,6 +2833,25 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
                     >
                       <Compass size={14} /> Rotate View
                     </button>
+                    <div className="px-4 py-2 border border-[#141414] bg-white/50 flex items-center justify-between">
+                      <div>
+                        <p className="text-[10px] uppercase opacity-50 font-mono italic">Map code</p>
+                        <p className="font-mono font-bold tracking-[0.2em]">{gameState.seed}</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard?.writeText(gameState.seed).then(
+                            () => addBattlefieldLog(`Map code ${gameState.seed} copied.`),
+                            () => addBattlefieldLog(`Map code: ${gameState.seed}`),
+                          );
+                        }}
+                        className="p-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
+                        title="Copy the map code"
+                        aria-label="Copy the map code"
+                      >
+                        <Copy size={14} />
+                      </button>
+                    </div>
                     <div className="p-4 border border-[#141414] bg-white/50">
                       <p className="text-[10px] uppercase opacity-50 font-mono italic">Terrain Info</p>
                       {hoveredTile ? (
@@ -2602,7 +2958,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
                         </div>
                       )}
                       <textarea 
-                        autoFocus
+                        autoFocus={!compact}
                         rows={3}
                         value={commandInput}
                         disabled={isAiThinking}
@@ -2647,6 +3003,81 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
           )}
         </AnimatePresence>
       </main>
+
+      {/* Phone command bar: the panels, the selected regiment's orders and End Turn, within thumb's reach */}
+      {compact && (
+        <nav className="border-t border-[#141414] bg-[#E4E3E0] flex flex-wrap sm:flex-nowrap items-center gap-1.5 px-2 pt-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom))] z-[80]" aria-label="Commands">
+          <div className={cn(
+            "min-w-0 items-center gap-1.5 order-first basis-full sm:order-none sm:basis-auto sm:flex-1",
+            selectedUnit ? "flex" : "hidden sm:flex"
+          )}>
+            {selectedUnit ? (
+              <>
+                <div className="min-w-0 flex-1 leading-tight px-1">
+                  <p className={cn("text-[11px] font-bold uppercase truncate", side(selectedUnit.owner).text)}>{selectedUnit.name}</p>
+                  <p className="text-[9px] font-mono opacity-60 truncate">
+                    {selectedUnit.id} · {selectedUnit.men} men · {selectedUnit.mp}/{selectedUnit.maxMp} MP
+                    {selectedUnit.isEntrenched ? ' · dug in' : selectedUnit.isBoxFormation ? ' · square' : selectedUnit.isPalisaded ? ' · palisaded' : ''}
+                  </p>
+                </div>
+                {commandable(selectedUnit) && (
+                  <div className="flex items-center gap-1 shrink-0">
+                    {[
+                      { key: 'ccw', icon: <RotateCcw size={16} />, label: 'Turn left (1 MP)', on: false, run: () => handleRotate('ccw'), show: true },
+                      { key: 'cw', icon: <RotateCw size={16} />, label: 'Turn right (1 MP)', on: false, run: () => handleRotate('cw'), show: true },
+                      { key: 'ent', icon: <Shield size={16} />, label: selectedUnit.isEntrenched ? 'Leave earthworks (1 MP)' : 'Entrench (all MP)', on: selectedUnit.isEntrenched, run: handleEntrench, show: true },
+                      { key: 'box', icon: <Square size={16} />, label: selectedUnit.isBoxFormation ? 'Disband square (1 MP)' : 'Form square (1 MP)', on: selectedUnit.isBoxFormation, run: handleToggleBox, show: selectedUnit.type === 'line_infantry' },
+                      { key: 'pal', icon: <Fence size={16} />, label: selectedUnit.isPalisaded ? 'Remove palisades' : 'Erect palisades', on: selectedUnit.isPalisaded, run: handleTogglePalisade, show: selectedUnit.type === 'cannon' },
+                    ].filter(b => b.show).map(b => (
+                      <button
+                        key={b.key}
+                        onClick={b.run}
+                        disabled={selectedUnit.mp < 1}
+                        title={b.label}
+                        aria-label={b.label}
+                        aria-pressed={b.on}
+                        className={cn("h-10 w-10 border border-[#141414] flex items-center justify-center disabled:opacity-30", b.on ? "bg-[#141414] text-[#E4E3E0]" : "bg-white")}
+                      >
+                        {b.icon}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : (
+              <p className="text-[10px] font-mono uppercase opacity-50 px-1 truncate">
+                {humanTurn ? 'Tap a regiment to give it orders' : "The AI general is moving"}
+              </p>
+            )}
+          </div>
+          <button
+            onClick={() => togglePanel('left')}
+            className={cn("h-10 px-3 border border-[#141414] flex items-center gap-1.5 text-[10px] uppercase font-bold", isLeftSidebarOpen ? "bg-[#141414] text-[#E4E3E0]" : "bg-white")}
+            aria-expanded={isLeftSidebarOpen}
+          >
+            <Users size={14} /> Intel
+          </button>
+          <button
+            onClick={() => togglePanel('right')}
+            className={cn("h-10 px-3 border border-[#141414] flex items-center gap-1.5 text-[10px] uppercase font-bold", isRightSidebarOpen ? "bg-[#141414] text-[#E4E3E0]" : "bg-white")}
+            aria-expanded={isRightSidebarOpen}
+          >
+            <Terminal size={14} /> HUD
+          </button>
+          <button
+            onClick={() => {
+              if (!humanTurn || gameState.winner) return;
+              endTurn();
+              setCommandInput('');
+              setCommandError(null);
+            }}
+            disabled={!humanTurn || !!gameState.winner}
+            className="h-10 px-4 ml-auto sm:ml-0 bg-[#141414] text-[#E4E3E0] text-[10px] uppercase font-bold tracking-widest flex items-center gap-1.5 disabled:opacity-40"
+          >
+            {humanTurn ? <>End turn <ChevronRight size={14} /></> : <><Cpu size={14} /> AI's turn</>}
+          </button>
+        </nav>
+      )}
     </div>
   );
 }

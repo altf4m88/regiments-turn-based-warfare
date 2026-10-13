@@ -54,3 +54,10 @@ export const resolveAiModel = (config: AiConfig) => {
     thinkingLevel: THINKING_LEVELS.some(l => l.id === config.thinkingLevel) ? config.thinkingLevel! : DEFAULT_THINKING_LEVEL,
   };
 };
+
+/** A general's model and thinking level for display, e.g. "Claude Sonnet 5.5 · medium". */
+export const describeModel = (config: AiConfig) => {
+  const ai = resolveAiModel(config);
+  const label = AI_MODELS[ai.provider].find(m => m.id === ai.model)?.label.replace(/ \(.*\)$/, '') ?? ai.model;
+  return `${label} · ${ai.thinkingLevel}`;
+};
