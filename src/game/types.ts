@@ -24,6 +24,8 @@ export interface Regiment {
   isBoxFormation: boolean;
   isPalisaded: boolean;
   hasAttacked: boolean;
+  /** Told to `hold` its ground this turn, so it does not count as forgotten. Cleared each turn. */
+  holding?: boolean;
 }
 
 export interface Tile {

@@ -412,6 +412,29 @@ export const humanPlayerOf = (state: Pick<GameState, 'aiPlayer'>) => 3 - aiPlaye
 export const isAiPlayer = (state: Pick<GameState, 'gameMode' | 'aiPlayer'>, player: number) =>
   state.gameMode === 'ai' || (state.gameMode === 'versus' && player === aiPlayerOf(state));
 
+// -- Idle regiments ------------------------------------------------------------------
+
+/**
+ * A player's regiments that have done nothing yet this turn: not moved, fought, turned,
+ * dug in, formed square, raised palisades or been told to hold. Fresh reinforcements
+ * (which cannot act yet) never count.
+ */
+export const idleRegiments = (state: Pick<GameState, 'regiments'>, player: number) =>
+  state.regiments.filter(r =>
+    r.owner === player && r.mp === r.maxMp && !r.hasAttacked &&
+    !r.isEntrenched && !r.isPalisaded && !r.isBoxFormation && !r.holding);
+
+/** One line for the roll call: where a regiment is, and what it could do right now. */
+export const describeIdle = (state: Pick<GameState, 'regiments'>, r: Regiment) => {
+  const dist = (e: Regiment) => Math.max(Math.abs(e.x - r.x), Math.abs(e.y - r.y));
+  const enemies = state.regiments.filter(e => e.owner !== r.owner).sort((a, b) => dist(a) - dist(b));
+  const targets = enemies.filter(e => dist(e) <= r.range && isTargetInFiringLine(r, e.x, e.y));
+  const nearest = enemies[0];
+  return `${r.id} (${r.type.replace('_', ' ')}) at ${r.x}:${r.y} facing ${r.facing}, ${r.men} men, ${r.mp} MP` +
+    (targets.length ? ` · can engage now: ${targets.slice(0, 4).map(e => e.id).join(', ')}` : ' · no enemy in range and arc') +
+    (nearest ? ` · nearest enemy ${nearest.id} at ${nearest.x}:${nearest.y} (${dist(nearest)} away)` : '');
+};
+
 // -- Battle statistics -------------------------------------------------------------
 
 const openingTally = (regiments: Regiment[], owner: number): SideTally => {

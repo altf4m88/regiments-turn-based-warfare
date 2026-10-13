@@ -53,7 +53,7 @@ import { twMerge } from 'tailwind-merge';
 
 import { Client } from "langsmith";
 import { Regiment, Tile, GameState, GameMode, UnitType, Facing, GameAnimation, AiConfig, AiProvider, Nation, ThinkingLevelSetting } from './game/types';
-import { getInitialState, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath, resolveAttack, nextRegimentId, parseUnitType, NATIONS, nationOf, nationsFor, isAiPlayer, aiPlayerOf, humanPlayerOf, VERSUS_AI_PLAYER, bumpTally, snapshot, sideStats, victoryReason, randomSeed, normalizeSeed } from './game/engine';
+import { getInitialState, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath, resolveAttack, nextRegimentId, parseUnitType, NATIONS, nationOf, nationsFor, isAiPlayer, aiPlayerOf, humanPlayerOf, VERSUS_AI_PLAYER, idleRegiments, describeIdle, bumpTally, snapshot, sideStats, victoryReason, randomSeed, normalizeSeed } from './game/engine';
 import { AI_MODELS, AI_PROVIDERS, THINKING_LEVELS, describeModel, resolveAiModel } from './ai/models';
 import { AiSession, startAiSession } from './ai/session';
 import { Markdown, plainText } from './ui/Markdown';
@@ -507,8 +507,32 @@ const AiConfigModal = ({
   );
 };
 
+/**
+ * Added to the field manual for an AI general facing a human (Human vs AI only, so AI vs AI
+ * games stay a clean comparison of the models).
+ */
+const VERSUS_BRIEFING = `
+
+## 8. Against a human commander
+
+In this battle your opponent is a human general, who will punish any regiment you leave idle. Every turn:
+- Give every regiment an order: march, attack, turn to face, entrench, form square or raise palisades. If you mean a regiment to stay where it is, order \`hold <id>\` (free; it can still fight) so the choice is deliberate.
+- Each of your replies shows a ROLL CALL of the regiments you have not used yet this turn, with the enemies each can engage now and the nearest enemy. \`ls idle\` shows the same list at any time.
+- Your \`end\` is refused while any regiment is unaccounted for, except on your fifth and last reply. Use your replies to work through the roll call.
+- Do not forget your cavalry. Hussars and chasseurs have 6 MP: every turn, send them round the flanks, after enemy light infantry and cannon, into the flank of line infantry, or toward the enemy Command Center.
+- Reinforcements count too: from the turn after they arrive, march them to the fight.`;
+
 /** CLI commands that only show information, so they also work on an AI general's turn. */
-const READ_ONLY_COMMANDS = new Set(['help', 'status', 'whoami', 'ls', 'export', 'clear']);
+/** Human vs AI: the AI general's regiments not yet used this turn, shown with every reply. */
+const rollCall = (state: GameState, lastIteration: boolean) => {
+  const idle = idleRegiments(state, state.currentPlayer);
+  if (!idle.length) return '\nROLL CALL: every regiment has acted or been told to hold. Finish with `end` once you are done.';
+  return `\nROLL CALL (\`ls idle\`): ${idle.length} regiment${idle.length === 1 ? '' : 's'} not yet used this turn. Give each an order or \`hold\` it; ` +
+    (lastIteration ? 'this is your last reply, so the turn ends whatever you leave undone.' : '`end` is refused while any remain.') +
+    '\n' + idle.map(r => `- ${describeIdle(state, r)}`).join('\n');
+};
+
+const READ_ONLY_COMMANDS = new Set(['help', 'status', 'whoami', 'ls', 'idle', 'export', 'clear']);
 
 export default function App() {
   const [gameState, setGameState] = useState<GameState>(getInitialState());
@@ -1143,7 +1167,8 @@ export default function App() {
       regiments: prev.regiments.map(r => ({
         ...r,
         mp: r.maxMp,
-        hasAttacked: false
+        hasAttacked: false,
+        holding: false
       })),
       cliHistory: []
     };
@@ -1159,7 +1184,11 @@ export default function App() {
     });
   };
 
-  const applyCommands = (state: GameState, cmd: string): { newState: GameState, logs: string[], cli: string[], error: string | null } => {
+  /**
+   * Runs CLI commands against a state. `finalIteration` tells it an AI general is on its
+   * last reply of the turn, when its `end` always goes through.
+   */
+  const applyCommands = (state: GameState, cmd: string, opts: { finalIteration?: boolean } = {}): { newState: GameState, logs: string[], cli: string[], error: string | null } => {
     let currentState = { ...state, animations: [] };
     const commander = state.currentPlayer;
     let logsToAdd: string[] = [];
@@ -1187,6 +1216,16 @@ export default function App() {
       localAddCliOutput(`> ${cleanLine}`);
 
       if (action === 'end') {
+        // Against a human, the AI general may not end its turn with regiments forgotten:
+        // it gets the roll call back and uses its next reply to give them orders (or `hold`).
+        const idle = currentState.gameMode === 'versus' && isAiPlayer(currentState, currentState.currentPlayer) && !opts.finalIteration
+          ? idleRegiments(currentState, currentState.currentPlayer)
+          : [];
+        if (idle.length) {
+          localAddCliOutput(`TURN NOT ENDED: ${idle.length} regiment${idle.length === 1 ? ' has' : 's have'} neither moved nor fought this turn. Give each an order (march, attack, turn, entrench, square), or \`hold <id>\` to keep it in place on purpose, then \`end\` again:`);
+          idle.forEach(r => localAddCliOutput(`- ${describeIdle(currentState, r)}`));
+          break;
+        }
         currentState = processEndTurn(currentState);
         currentState.battlefieldLogs = [`Turn ${currentState.turn}: Player ${currentState.currentPlayer}'s turn.`, ...currentState.battlefieldLogs].slice(0, 20);
         localAddCliOutput("Turn ended by command.");
@@ -1194,7 +1233,7 @@ export default function App() {
       }
 
       if (action === 'help') {
-        localAddCliOutput("Commands: ls [all|types|map|supply|info <id>|tile <x>:<y>|costs], whoami, status, mv <id> <x>:<y>, eg <id> <targetId>, ent <id>, rtr <id>, rtl <id>, rlt <id>, box <id>, pal <id>, sel <id>, spawn <type>, end, clear, help, export");
+        localAddCliOutput("Commands: ls [all|idle|types|map|supply|info <id>|tile <x>:<y>|costs], whoami, status, mv <id> <x>:<y>, eg <id> <targetId>, ent <id>, rtr <id>, rtl <id>, rlt <id>, box <id>, pal <id>, hold <id>, sel <id>, spawn <type>, end, clear, help, export");
         continue;
       }
 
@@ -1222,6 +1261,17 @@ export default function App() {
       if (action === 'clear') {
         currentState.cliHistory = [];
         currentState.battlefieldLogs = [];
+        continue;
+      }
+
+      if (action === 'idle' || (action === 'ls' && parts[1] === 'idle')) {
+        const idle = idleRegiments(currentState, currentState.currentPlayer);
+        if (!idle.length) {
+          localAddCliOutput("Every regiment has moved, fought, dug in, formed square or been told to hold.");
+        } else {
+          localAddCliOutput(`--- Regiments not yet used this turn (${idle.length}) ---`);
+          idle.forEach(r => localAddCliOutput(describeIdle(currentState, r)));
+        }
         continue;
       }
 
@@ -1304,6 +1354,11 @@ export default function App() {
         case 'sel':
           currentState.selectedUnitId = unit.id;
           localAddCliOutput(`Selected [${unit.id}] ${unit.name}.`);
+          break;
+        case 'hold':
+          // A deliberate choice to keep a regiment where it is; it still may fight this turn.
+          currentState.regiments = currentState.regiments.map(r => r.id === unit.id ? { ...r, holding: true } : r);
+          localAddCliOutput(`[${unit.id}] holds its ground this turn.`);
           break;
         case 'mv': {
           const coords = parts[2]?.split(':');
@@ -1596,7 +1651,7 @@ export default function App() {
         apiKey,
         model,
         thinkingLevel,
-        systemInstruction: aiInstructions,
+        systemInstruction: aiInstructions + (gameState.gameMode === 'versus' ? VERSUS_BRIEFING : ''),
         useVertexAI: config.useVertexAI,
       });
       session = chat;
@@ -1645,7 +1700,7 @@ You are Player ${currentGameState.currentPlayer} (${NATIONS[nationOf(currentGame
 Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE code block with your commands.
 - The commands run in order, and you will see their results in the next iteration.
 - Every regiment's MP refills each turn, and MP you leave unused is lost.
-- \`end\` ends your turn at once and any command after it is ignored. ${lastIteration ? 'This is your last iteration: finish with `end`.' : 'Add it as the last command only once every regiment has done what you want this turn.'}${unusedNote}
+- \`end\` ends your turn at once and any command after it is ignored. ${lastIteration ? 'This is your last iteration: finish with `end`.' : 'Add it as the last command only once every regiment has done what you want this turn.'}${currentGameState.gameMode === 'versus' ? rollCall(currentGameState, lastIteration) : unusedNote}
 `;
 
         let response;
@@ -1719,7 +1774,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
           // Fallback: try to find lines that look like commands in the whole text
           // This handles cases where the AI forgets triple backticks
           const lines = responseText.split('\n');
-          const commandKeywords = ['mv', 'eg', 'ent', 'rtr', 'rtl', 'rlt', 'rtn', 'rte', 'rts', 'rtw', 'box', 'pal', 'sel', 'spawn', 'end', 'ls', 'whoami', 'status', 'help', 'clear'];
+          const commandKeywords = ['mv', 'eg', 'ent', 'rtr', 'rtl', 'rlt', 'rtn', 'rte', 'rts', 'rtw', 'box', 'pal', 'hold', 'sel', 'spawn', 'end', 'ls', 'idle', 'whoami', 'status', 'help', 'clear'];
           commands = lines.filter(line => {
             const trimmed = line.trim();
             if (!trimmed || trimmed.startsWith('#')) return false;
@@ -1740,7 +1795,8 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
             if (!trimmedCmd || trimmedCmd.startsWith('#')) continue;
 
             // Execute one command
-            const { newState, logs, cli, error } = applyCommands(currentGameState, trimmedCmd);
+            const before = currentGameState;
+            const { newState, logs, cli, error } = applyCommands(currentGameState, trimmedCmd, { finalIteration: lastIteration });
             
             currentGameState = newState;
             setGameState(newState); // Update UI immediately
@@ -1753,10 +1809,13 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
               // Continue to next command instead of breaking
             }
 
-            if (trimmedCmd.toLowerCase() === 'end') {
+            // The turn is over once play passes (or the battle is won). An `end` the game
+            // postponed (regiments left idle against a human) closes this reply instead.
+            if (newState.currentPlayer !== before.currentPlayer || newState.turn !== before.turn || newState.winner) {
               turnEnded = true;
               break;
             }
+            if (/^end\b/i.test(trimmedCmd)) break;
 
             await new Promise(resolve => setTimeout(resolve, 800));
           }
@@ -1779,9 +1838,9 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
 
       // Final safety check: if the turn hasn't ended after all iterations, force an end
       // This prevents the game from getting stuck if the AI fails to issue 'end'
-      if (live() && currentGameState.currentPlayer === gameState.currentPlayer && !gameState.winner) {
+      if (live() && currentGameState.currentPlayer === gameState.currentPlayer && !currentGameState.winner) {
         addBattlefieldLog(`AI Player ${currentGameState.currentPlayer} turn timed out. Forcing end.`);
-        const { newState } = applyCommands(currentGameState, 'end');
+        const { newState } = applyCommands(currentGameState, 'end', { finalIteration: true });
         setGameState(newState);
       }
 
