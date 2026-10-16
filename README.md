@@ -9,6 +9,25 @@ On the start screen, choose the army Player 1 commands (British or French; Playe
 - **Human vs AI**: you command one army and an AI general commands the other. In the dialog that opens, choose your side (Player 1 in the south moves first; Player 2 in the north moves second) and the general's provider, model and thinking level. On its turn the general moves by itself: you can watch, select regiments to inspect them and use the CLI's information commands (`ls`, `status` and so on), but your orders wait until your turn. Facing a human, the general is held to account for every regiment: each reply shows it a roll call of the regiments it has not used yet (`ls idle`), and its `end` is refused while any remain unless it orders them to `hold`, up to its fifth and last reply. AI Gameplay keeps the generals unassisted, so model comparisons stay clean. In 3D the camera stays on your side of the field and follows the enemy's moves.
 - **AI Gameplay**: an AI general commands each army, and you watch.
 
+**Commanders.** Each army is led by a named general: General Wellington and Emperor Napoléon unless you choose otherwise. On the start screen, type any name for each army's commander, or roll another marshal or general of the period (Picton, Hill, Uxbridge… for the British; Ney, Davout, Soult, Murat… for the French). Names are kept in this browser and appear in the turn banner, the header, the AI's dispatches, the battle report and the records. When an AI general's turn begins, the banner shows the commander's bust and names its model with its provider's logo, e.g. *Marshal Ney is thinking with Claude Sonnet 5.5*. The sixteen historical commanders have portraits, cropped from public-domain paintings on Wikimedia Commons (Lawrence's Wellington, David's Napoléon, Gérard's Ney and Murat, and others; credits in `src/assets/portraits/README.md`); a name you type yourself is drawn as an officer's silhouette in the army's colours.
+
+**Your own generals.** Tap a commander's portrait on the start screen to give them a picture of your choosing, a painting or a photo: pick or drop the file, drag it and zoom to frame the head and shoulders in the circle, and save. The portrait is kept in this browser under the general's name (up to 24 of them, as 256×256 JPEGs), and appears everywhere the general does: the turn banner, the dispatch bubble, AI settings and the battle report. It replaces the game's portrait for a historical commander until you remove it, and generals you made are offered again in the name list for their army. Pictures never leave the browser.
+
+**Armies.** Below each commander, choose the army they field. All four cost about the same at reinforcement prices (5,040 to 5,160 supply), so none is simply stronger; they play differently.
+
+| Army | Order of battle | Plays as |
+| :--- | :--- | :--- |
+| Combined arms | 6 line · 2 light · 2 guns · 2 hussars · 1 chasseur (13 regiments, 8,700 men) | The standard army, deployed as before |
+| Cavalry corps | 4 line · 1 light · 1 gun · 4 hussars · 2 chasseurs (12, 7,150) | Swift flanking: the horse rides round the flanks for guns, skirmishers and exposed lines |
+| Light division | 4 line · 5 light · 1 gun · 1 hussar · 2 chasseurs (13, 8,350) | A skirmishing battle from woods and villages, out of reach of line musketry |
+| Grand battery | 5 line · 2 light · 4 guns · 1 hussar (12, 7,200) | Attrition: guns break the enemy as it crosses the killing ground before an entrenched line |
+
+An AI general gets a short briefing on how to fight with its army, and a note on how to answer the enemy's. When both sides field combined arms nothing is added, so standard games keep the standard prompts and comparisons between models stay valid. The choice is kept per army in this browser, like the commander; a rematch keeps each side's army, and the report and the records name them.
+
+Each AI dispatch appears as a speech bubble from its general over the top right of the map, beside the HUD: three lines at first, **Read full dispatch** for the rest. **−** minimises it to a tab (remembered, with a dot when a new dispatch arrives) and **×** closes it until the next one. The last dispatch stays up during your turn so you can read it; every dispatch is kept in the HUD's *Strategic Archive*.
+
+AI generals play **in character**: each knows its own name and its opponent's, and writes its dispatches in the voice of its army, a French marshal with the odd *Mon Dieu !* or *En avant !*, a British general with a dry *Steady, lads!*. The persona only colours the dispatches; orders are the same commands. Each general has an *In character* switch in AI settings; turn it off to send the neutral prompts, for example when comparing models. The Claude and Gemini logos come from [Simple Icons](https://simpleicons.org), and the OpenAI, OpenRouter and model makers' logos from [Lobe Icons](https://github.com/lobehub/lobe-icons) (see `src/assets/providers/`).
+
 **On a phone or tablet.** On a narrow screen, or a phone held sideways, the header shrinks to one line (view, AI settings and abandon move into its ⋮ menu). The Intel and HUD panels slide over the map from a command bar at the bottom, which also carries the selected regiment's orders (turn, entrench, square, palisade) and End Turn. In 3D, drag to pan, pinch to zoom, twist with two fingers to rotate, and double-tap to focus.
 
 **Map codes.** Every battlefield comes from a map code such as `K7QM2X`, shown on the start screen with a preview, and in the Tactical HUD during the battle. The same code always generates the same map, so you can replay it, share it, or compare generals on it. Leave the code as it is for a new random map, roll another with **New map**, or type one in.
@@ -21,19 +40,30 @@ On the start screen, choose the army Player 1 commands (British or French; Playe
 
 From the report you can export it all as JSON (with the generals' dispatches), or start a rematch on the same map. **Rematch, swap sides** gives each general the other army's starting position and turn order while it keeps its own army, which is the fair way to compare two generals on an asymmetric map. Finished battles are kept in this browser.
 
+**Records and leaderboard.** *Records & leaderboard* on the start screen (or *Leaderboard* in a battle report) opens every finished battle kept in this browser, filtered by mode and by rules version. It has three tabs:
+- **Leaderboard**: each general (an AI model at a thinking level, or you) with an Elo rating (everyone starts at 1500), won–lost, swapped-side maps (won from both ends, or split one each), win rates as Player 1 and as Player 2, men lost and killed per battle, and turns to win. Battles with the same general on both sides, including human against human, are not ranked. It also shows how often Player 1, who moves first, wins.
+- **Head to head**: each pair of generals' score and swapped-side maps.
+- **History**: every battle, with a button to replay its map or delete it.
+
+Records only compare battles fought under the current rules (`RULES_VERSION` in `src/game/engine.ts`, bumped whenever combat, economy or AI rules change); switch to *All rules* to include older ones. Nothing leaves your browser: **Export** saves the records as JSON, **Import** merges a file from another browser (battles already present are skipped), and **Clear all** deletes them.
+
 **Pause AI** in the header stops the AI generals once the current turn ends. If an AI general's turn fails, for example because of a missing key, an API error or a rate limit, the battle waits for you: **Retry AI turn** runs it again from where it stopped, and so does saving new settings in *AI Settings*.
 
 # AI Generals
-In *AI Settings*, each AI player's general runs on **Gemini** (Google) or **Claude** (Anthropic), so you can pit one against the other:
+In *AI Settings*, each AI player's general runs on **Gemini** (Google), **Claude** (Anthropic), **GPT** (OpenAI), or one of many models on **OpenRouter**, so you can pit any of them against another:
 
 | Provider | Models | Key |
 | :--- | :--- | :--- |
 | Gemini | Gemini 3.8 Flash (`gemini-3.8-flash`) | [Google AI Studio](https://aistudio.google.com), or Vertex AI |
 | Claude | Claude Sonnet 5.5 (`claude-sonnet-5-5`, default), Claude Opus 5.5 (strongest), Claude Haiku 5.5 (fastest and cheapest) | [Claude Platform](https://platform.claude.com) |
+| OpenAI | GPT-6.1 Sol (`gpt-6.1-sol`, default), GPT-6 Astra (strongest), GPT-6 Luna (fastest and cheapest) | [OpenAI Platform](https://platform.openai.com) |
+| OpenRouter | GLM 5.3 (`z-ai/glm-5.3`, default), Llama 4 Maverick, Muse Spark 1.3, Gemma 4 31B, DeepSeek V4 Pro, Qwen3.8 Max, Kimi K3, Mistral Large 4, gpt-oss-120b, Nemotron 3 Ultra, Grok 4.7, MiniMax M3, or any other model by its OpenRouter ID | [OpenRouter](https://openrouter.ai/keys) |
 
-Each player also picks a thinking level: Low, Medium (the default) or High. It is sent as Gemini's thinking level, which Gemini 3.8 Flash requires, or as Claude's effort. Higher levels plan more carefully, but turns take longer and cost more.
+Each player also picks a thinking level: Low, Medium (the default) or High. It is sent as Gemini's thinking level, which Gemini 3.8 Flash requires, as Claude's effort, or as the reasoning effort of GPT and OpenRouter models. Higher levels plan more carefully, but turns take longer and cost more. Some OpenRouter models take only some levels (GLM 5.3 offers Low and High), and the menu shows just those; Gemma 4 and MiniMax M3 reason with no levels to choose, and Llama 4 Maverick does not reason.
 
-Requests go straight from the browser to Google or Anthropic, using the player's own key. Because the key sits in the browser, use a dedicated key with a spending limit. On Claude, the game caches the instructions and the turn so far between a turn's requests. If Claude Sonnet 5.5 or Opus 5.5 declines a request, Anthropic's server-side fallback tries another model in the same call. A general whose request is still declined ends its turn, and the battle log says why.
+Requests go straight from the browser to Google, Anthropic, OpenAI or OpenRouter, using the player's own key. Because the key sits in the browser, use a dedicated key with a spending limit. On Claude, the game caches the instructions and the turn so far between a turn's requests. If Claude Sonnet 5.5 or Opus 5.5 declines a request, Anthropic's server-side fallback tries another model in the same call. A general whose request is still declined ends its turn, and the battle log says why.
+
+GPT generals use OpenAI's Responses API with nothing stored at OpenAI (`store: false`): the game resends the turn so far with the model's encrypted reasoning, so each reply in a turn builds on the reasoning before it, as Claude's does. OpenRouter generals use its Chat Completions API and pass back the reasoning blocks the model returns. The OpenRouter list is a selection of capable models from several makers, most with open weights; pick *Another OpenRouter model…* to type any ID from [openrouter.ai/models](https://openrouter.ai/models), such as a `:free` variant. Smaller models may struggle to give valid orders. In the banner, the records and the leaderboard, an OpenRouter general shows its maker's logo (Meta, Z.ai, Gemma…) rather than OpenRouter's. Which providers serve a model, and what they do with your prompts, follows your OpenRouter account settings.
 
 
 # 3D Battlefield
@@ -89,7 +119,7 @@ Regiments is a static single-page app, so it deploys as a small nginx container 
 - `deploy/nginx.conf.template`: SPA fallback, gzip, long-lived caching for fingerprinted `/assets`, and no caching for `index.html`.
 - `cloudbuild.yaml`: build → push to Artifact Registry → deploy to Cloud Run, for continuous deployment.
 
-**API keys stay in the browser.** Players type their Gemini, Claude and LangSmith keys into *AI Settings*, and the deployed site never sees them. Don't put keys in a `.env` for the build: Vite inlines `define`d variables into the public JavaScript. `.dockerignore` keeps `.env*` files out of the image anyway.
+**API keys stay in the browser.** Players type their Gemini, Claude, OpenAI, OpenRouter and LangSmith keys into *AI Settings*, and the deployed site never sees them. Don't put keys in a `.env` for the build: Vite inlines `define`d variables into the public JavaScript. `.dockerignore` keeps `.env*` files out of the image anyway.
 
 ### One-time setup
 ```bash

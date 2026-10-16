@@ -1,0 +1,24 @@
+# Commander portraits
+
+Head-and-shoulders crops (256×256 JPEG) of portraits on Wikimedia Commons, one for each commander the game offers by name. Every source painting or engraving is in the public domain: the artists died more than 70 years ago, and Commons treats faithful photographs of two-dimensional public-domain works as public domain too (PD-Art; Creative Commons Public Domain Mark). Each was found as the lead image of the person's English Wikipedia article, checked on its Commons file page, downloaded, and cropped around the detected face.
+
+| Commander | File | Artist | Date | Source |
+| :--- | :--- | :--- | :--- | :--- |
+| General Wellington | `general-wellington.jpg` | Thomas Lawrence (1769–1830) | between circa 1815 and circa 1816 | [Sir Arthur Wellesley, 1st Duke of Wellington.jpg](https://commons.wikimedia.org/wiki/File:Sir_Arthur_Wellesley,_1st_Duke_of_Wellington.jpg) |
+| General Picton | `general-picton.jpg` | William Beechey (1753–1839) | between 1815 and 1817 | [Lieutenant-General Sir Thomas Picton A17581.jpg](https://commons.wikimedia.org/wiki/File:Lieutenant-General_Sir_Thomas_Picton_A17581.jpg) |
+| General Hill | `general-hill.jpg` | George Dawe | 1 January 1819 | [Lieutenant-General Rowland Lord Hill, 1819.jpg](https://commons.wikimedia.org/wiki/File:Lieutenant-General_Rowland_Lord_Hill,_1819.jpg) |
+| General Uxbridge | `general-uxbridge.jpg` | William Salter (1804–1875) | 1830s | [Henry William Paget, 1st Marquess of Anglesey by William Salter.jpg](https://commons.wikimedia.org/wiki/File:Henry_William_Paget,_1st_Marquess_of_Anglesey_by_William_Salter.jpg) |
+| General Moore | `general-moore.jpg` | Thomas Lawrence (1769–1830) | Unknown date, but author died in 1830 | [Sir John Moore (by Sir Thomas Lawrence) - original colors version.jpg](https://commons.wikimedia.org/wiki/File:Sir_John_Moore_(by_Sir_Thomas_Lawrence)_-_original_colors_version.jpg) |
+| General Graham | `general-graham.jpg` | Thomas Lawrence (1769–1830) | circa 1817 | [Thomas Graham (1748–1843), Baron Lynedoch by Thomas Lawrence 1.jpg](https://commons.wikimedia.org/wiki/File:Thomas_Graham_(1748%E2%80%931843),_Baron_Lynedoch_by_Thomas_Lawrence_1.jpg) |
+| General Beresford | `general-beresford.jpg` | William Beechey (1753–1839) | between circa 1814 and circa 1815 | [William Carr Beresford, Viscount Beresford by Sir William Beechey (2).jpg](https://commons.wikimedia.org/wiki/File:William_Carr_Beresford,_Viscount_Beresford_by_Sir_William_Beechey_(2).jpg) |
+| General Craufurd | `general-craufurd.jpg` | Unknown artist | 1 January 1800 | [Robert Craufurd (1764–1812).jpg](https://commons.wikimedia.org/wiki/File:Robert_Craufurd_(1764%E2%80%931812).jpg) |
+| Emperor Napoléon | `emperor-napoleon.jpg` | Jacques-Louis David (1748–1825) | 1812 | [Jacques-Louis David - The Emperor Napoleon in His Study at the Tuileries - Google Art Project.jpg](https://commons.wikimedia.org/wiki/File:Jacques-Louis_David_-_The_Emperor_Napoleon_in_His_Study_at_the_Tuileries_-_Google_Art_Project.jpg) |
+| Marshal Ney | `marshal-ney.jpg` | François Gérard (1770–1837) | circa 1805 | [Marechal Ney.jpg](https://commons.wikimedia.org/wiki/File:Marechal_Ney.jpg) |
+| Marshal Davout | `marshal-davout.jpg` | After Pierre-Claude Gautherot (–1825) | circa 1852 | [Louis nicolas davout.jpg](https://commons.wikimedia.org/wiki/File:Louis_nicolas_davout.jpg) |
+| Marshal Soult | `marshal-soult.jpg` | George Peter Alexander Healy (1813–1894) | 1840 | [Marshal Nicolas Jean de Dieu Soult Duc de Dalmatie, by George Peter Alexander Healy (English Heritage, The Wellington Collection, Apsley House).jpg](https://commons.wikimedia.org/wiki/File:Marshal_Nicolas_Jean_de_Dieu_Soult_Duc_de_Dalmatie,_by_George_Peter_Alexander_Healy_(English_Heritage,_The_Wellington_Collection,_Apsley_House).jpg) |
+| Marshal Murat | `marshal-murat.jpg` | François Gérard (1770–1837) | circa 1808 | [Murat2.jpg](https://commons.wikimedia.org/wiki/File:Murat2.jpg) |
+| Marshal Lannes | `marshal-lannes.jpg` | Jean-Charles Nicaise Perrin (1754–1831) | between 1805 and 1810 | [Jean Charles Nicaise Perrin - Jean Lannes, duc de Montebello, Maréchal de France.jpg](https://commons.wikimedia.org/wiki/File:Jean_Charles_Nicaise_Perrin_-_Jean_Lannes,_duc_de_Montebello,_Mar%C3%A9chal_de_France.jpg) |
+| Marshal Masséna | `marshal-massena.jpg` | Edme-Adolphe Fontaine (1814–1883), after Antoine-Jean Gros | circa 1853 (Gros's original: 1814) | [André Masséna (Fontaine et Gros).jpg](https://commons.wikimedia.org/wiki/File:Andr%C3%A9_Mass%C3%A9na_(Fontaine_et_Gros).jpg) |
+| Marshal Grouchy | `marshal-grouchy.jpg` | Jean Sébastien Rouillard (1787–1852) | 1835 | [Emmanuel de Grouchy 2.jpg](https://commons.wikimedia.org/wiki/File:Emmanuel_de_Grouchy_2.jpg) |
+
+To add another commander: crop a public-domain portrait to a square bust, save it here, import it in `index.ts` under the exact name used in `COMMANDERS` (`src/game/engine.ts`), and add a row above.

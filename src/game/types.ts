@@ -56,12 +56,13 @@ export interface GameAnimation {
   timestamp: number;
 }
 
-/** Which LLM service plays a general: Google's Gemini or Anthropic's Claude. */
-export type AiProvider = 'gemini' | 'claude';
+/** Which LLM service plays a general: Google's Gemini, Anthropic's Claude, OpenAI's GPT, or a model on OpenRouter. */
+export type AiProvider = 'gemini' | 'claude' | 'openai' | 'openrouter';
 
 /**
  * How much the model reasons before answering. Sent as Gemini's thinking level
- * (Gemini 3.8 Flash requires one) or as Claude's effort.
+ * (Gemini 3.8 Flash requires one), as Claude's effort, or as the reasoning effort
+ * of OpenAI and OpenRouter models.
  */
 export type ThinkingLevelSetting = 'low' | 'medium' | 'high';
 
@@ -75,7 +76,16 @@ export interface AiConfig {
   /** Anthropic API key, from platform.claude.com. */
   claudeApiKey?: string;
   claudeModel?: string;
+  /** OpenAI API key, from platform.openai.com. */
+  openaiApiKey?: string;
+  openaiModel?: string;
+  /** OpenRouter API key, from openrouter.ai; one key for many makers' models. */
+  openrouterApiKey?: string;
+  /** An OpenRouter model ID such as "z-ai/glm-5.3": one of the suggested models, or any other. */
+  openrouterModel?: string;
   thinkingLevel?: ThinkingLevelSetting;
+  /** Play in character: know both commanders' names and write in the voice of its army. On unless false. */
+  inCharacter?: boolean;
   langsmithApiKey?: string;
   langsmithProject?: string;
   useVertexAI?: boolean;
@@ -91,6 +101,9 @@ export interface MonologueEntry {
 }
 
 export type GameMode = 'manual' | 'ai' | 'versus';
+
+/** A starting army: today's combined arms, or one built around cavalry, skirmishers or guns. */
+export type ArmyDoctrine = 'balanced' | 'cavalry' | 'light' | 'artillery';
 
 /** A side's running account of the battle; losses and strength are worked out from it and the field. */
 export interface SideTally {
@@ -143,11 +156,16 @@ export interface GameState {
   seed: string;
   /** Unique per battle, so a finished battle is recorded once. */
   battleId: string;
+  startedAt: number;
   tally: { [player: number]: SideTally };
   timeline: TurnSnapshot[];
   aiConfigs: { [key: number]: AiConfig };
   monologueHistory: MonologueEntry[];
   nations: { [player: number]: Nation };
+  /** The name each player's general goes by, e.g. "General Wellington". */
+  commanders?: { [player: number]: string };
+  /** Each player's starting army (combined arms unless chosen otherwise). */
+  doctrines?: { [player: number]: ArmyDoctrine };
   /** Highest number handed out per id prefix ("p1-l": 7), so reinforcement ids are never reused. */
   idCounters?: Record<string, number>;
 }

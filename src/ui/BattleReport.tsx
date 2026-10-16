@@ -1,7 +1,10 @@
 import { ReactNode } from 'react';
-import { Download, Eye, Repeat, RotateCcw, Shuffle } from 'lucide-react';
-import { NATIONS, nationOf, sideStats, victoryReason, VictoryReason } from '../game/engine';
-import { BattleRecord, generalOf } from '../game/history';
+import { Download, Eye, Repeat, RotateCcw, Shuffle, Trophy } from 'lucide-react';
+import { DOCTRINES, NATIONS, commanderOf, doctrineOf, isAiPlayer, nationOf, sideStats, victoryReason, VictoryReason } from '../game/engine';
+import { resolveAiModel } from '../ai/models';
+import { ProviderIcon } from './ProviderIcon';
+import { CommanderPortrait } from './CommanderPortrait';
+import { BattleRecord, armyOf, generalOf } from '../game/history';
 import { GameState, Nation, Regiment, Tile } from '../game/types';
 import { ARMY_COLOR, StrengthChart } from './StrengthChart';
 
@@ -94,17 +97,22 @@ const Stat = ({ value, note }: { value: string; note?: string }) => (
 );
 
 /** The end-of-battle report: who won and how, each side's account, strength over time, and earlier battles on this map. */
-export function BattleReport({ state, history, onRematch, onExport, onViewField, onNewCampaign }: {
+export function BattleReport({ state, history, onRematch, onExport, onViewField, onNewCampaign, onOpenRecords }: {
   state: GameState;
   history: BattleRecord[];
   onRematch: (swapSides: boolean) => void;
   onExport: () => void;
   onViewField: () => void;
   onNewCampaign: () => void;
+  onOpenRecords?: () => void;
 }) {
   const winner = state.winner!;
   const reason = victoryReason(state);
-  const sides = [1, 2].map(p => ({ player: p, nation: nationOf(state, p), general: generalOf(state, p), s: sideStats(state, p) }));
+  const sides = [1, 2].map(p => ({
+    player: p, nation: nationOf(state, p), general: generalOf(state, p), commander: commanderOf(state, p), army: DOCTRINES[doctrineOf(state, p)].name,
+    provider: isAiPlayer(state, p) ? resolveAiModel(state.aiConfigs[p]).provider : undefined,
+    model: isAiPlayer(state, p) ? resolveAiModel(state.aiConfigs[p]).model : undefined, s: sideStats(state, p),
+  }));
   const won = sides[winner - 1];
   const onThisMap = history.filter(b => b.seed === state.seed).slice(0, 8);
 
@@ -129,7 +137,7 @@ export function BattleReport({ state, history, onRematch, onExport, onViewField,
           </p>
           <h2 className="mt-2 text-3xl sm:text-4xl font-serif italic font-bold tracking-tight">The {NATIONS[won.nation].adjective} carry the field</h2>
           <p className="mt-2 text-sm">
-            Player {winner} ({won.general}) {reason ? REASON_TEXT[reason] : 'won'} on turn {state.turn}.
+            <span className="font-bold">{won.commander}</span> (Player {winner}, {won.general}) {reason ? REASON_TEXT[reason] : 'won'} on turn {state.turn}.
           </p>
         </header>
 
@@ -144,7 +152,13 @@ export function BattleReport({ state, history, onRematch, onExport, onViewField,
                       <Key nation={sd.nation} /> {NATIONS[sd.nation].adjective}
                       {sd.player === winner && <span className="ml-1 px-1.5 py-0.5 text-[9px] tracking-widest bg-[#141414] text-[#E4E3E0]">Victor</span>}
                     </span>
-                    <span className="block text-[10px] font-mono uppercase text-[#141414]/60 mt-0.5">
+                    <span className="flex items-center gap-2 mt-1">
+                      <CommanderPortrait name={sd.commander} nation={sd.nation} size={30} />
+                      <span className="font-serif italic text-base leading-tight">{sd.commander}</span>
+                    </span>
+                    <span className="block text-[10px] font-mono uppercase text-[#141414]/80 mt-0.5">{sd.army}</span>
+                    <span className="flex items-center gap-1 text-[10px] font-mono uppercase text-[#141414]/60 mt-0.5">
+                      <ProviderIcon provider={sd.provider} model={sd.model} size={11} />
                       Player {sd.player} · {sd.player === 1 ? 'south' : 'north'} · {sd.general}
                     </span>
                   </th>
@@ -186,8 +200,8 @@ export function BattleReport({ state, history, onRematch, onExport, onViewField,
                       <td className="py-1.5 pr-2 whitespace-nowrap">{new Date(b.endedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
                       {[1, 2].map(p => (
                         <td key={p} className="py-1.5 pr-2">
-                          <span className="flex items-center gap-1.5 font-bold uppercase"><Key nation={b.sides[p].nation} />{NATIONS[b.sides[p].nation].adjective}</span>
-                          <span className="block text-[#141414]/60">{b.sides[p].general} · lost {fmt(b.sides[p].lostMen)} men</span>
+                          <span className="flex items-center gap-1.5 font-bold uppercase"><Key nation={b.sides[p].nation} />{NATIONS[b.sides[p].nation].adjective}{armyOf(b, p) && <span className="font-normal text-[#141414]/60">· {armyOf(b, p)}</span>}</span>
+                          <span className="block text-[#141414]/60">{b.sides[p].commander ? `${b.sides[p].commander} · ` : ''}{b.sides[p].general} · lost {fmt(b.sides[p].lostMen)} men</span>
                         </td>
                       ))}
                       <td className="py-1.5">
@@ -219,6 +233,11 @@ export function BattleReport({ state, history, onRematch, onExport, onViewField,
           <button onClick={onViewField} className="px-4 py-2.5 border border-[#141414] text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0]">
             <Eye size={14} /> View battlefield
           </button>
+          {onOpenRecords && (
+            <button onClick={onOpenRecords} className="px-4 py-2.5 border border-[#141414] text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0]">
+              <Trophy size={14} /> Leaderboard
+            </button>
+          )}
           <button onClick={onNewCampaign} className="ml-auto px-4 py-2.5 border border-[#141414] text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0]">
             <RotateCcw size={14} /> New campaign
           </button>

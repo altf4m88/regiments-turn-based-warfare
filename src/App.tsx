@@ -12,6 +12,7 @@ import {
   Shuffle,
   Copy,
   ClipboardList,
+  Trophy,
   EllipsisVertical,
   Move, 
   Users, 
@@ -46,25 +47,39 @@ import {
   Play,
   X,
   Box,
-  LayoutGrid
+  LayoutGrid,
+  Camera
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
 import { Client } from "langsmith";
-import { Regiment, Tile, GameState, GameMode, UnitType, Facing, GameAnimation, AiConfig, AiProvider, Nation, ThinkingLevelSetting } from './game/types';
-import { getInitialState, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath, resolveAttack, nextRegimentId, parseUnitType, NATIONS, nationOf, nationsFor, isAiPlayer, aiPlayerOf, humanPlayerOf, VERSUS_AI_PLAYER, idleRegiments, describeIdle, bumpTally, snapshot, sideStats, victoryReason, randomSeed, normalizeSeed } from './game/engine';
-import { AI_MODELS, AI_PROVIDERS, THINKING_LEVELS, describeModel, resolveAiModel } from './ai/models';
+import { Regiment, Tile, GameState, GameMode, UnitType, Facing, GameAnimation, AiConfig, Nation, ThinkingLevelSetting, ArmyDoctrine } from './game/types';
+import { getInitialState, getTerrainMpCost, isTargetInFiringLine, getZoCStatus, getTerrainDefenseBonus, UNIT_COSTS, SUPPLY_PER_TURN, SUPPLY_NODE_BONUS, createInitialRegiment, findPath, resolveAttack, nextRegimentId, parseUnitType, NATIONS, nationOf, nationsFor, isAiPlayer, aiPlayerOf, humanPlayerOf, VERSUS_AI_PLAYER, idleRegiments, describeIdle, COMMANDERS, DEFAULT_COMMANDERS, normalizeCommander, commanderOf, DOCTRINES, doctrineOf, isDoctrine, bumpTally, snapshot, sideStats, victoryReason, randomSeed, normalizeSeed } from './game/engine';
+import { AI_MODELS, AI_PROVIDERS, PROVIDERS, THINKING_LEVELS, describeModel, isOpenRouterId, keyPatch, modelPatch, resolveAiModel, thinkingLevelsFor } from './ai/models';
 import { AiSession, startAiSession } from './ai/session';
 import { Markdown, plainText } from './ui/Markdown';
 import { BattleReport, CasualtyPanel, MapPreview } from './ui/BattleReport';
 import { BattleRecord, generalOf, loadBattles, recordBattle, saveBattle } from './game/history';
 import { startsCompact, useCompact } from './ui/useCompact';
+import { RecordsView } from './ui/RecordsView';
+import { inCharacter, personaBriefing, whoIsWho } from './ai/persona';
+import { doctrineBriefing } from './ai/doctrine';
+import { TurnBanner } from './ui/TurnBanner';
+import { DispatchBubble } from './ui/DispatchBubble';
+import { CommanderPortrait } from './ui/CommanderPortrait';
+import { ArmyPicker } from './ui/ArmyPicker';
+import { PortraitEditor } from './ui/PortraitEditor';
+import { useCustomPortraits } from './ui/customPortraits';
+import { ProviderIcon } from './ui/ProviderIcon';
 
 // The 3D battlefield (three.js) is code-split so the 2D view stays light.
 const BattlefieldView = lazy(() => import('./three/BattlefieldView'));
 
 /** Team colours follow the army: British red, French blue. Literal class names so Tailwind keeps them. */
+/** The model menu's entry for typing in any OpenRouter model ID. */
+const CUSTOM_MODEL = '__custom';
+
 const SIDE_UI: Record<Nation, {
   text: string; textSoft: string; bubble: string; chip: string; unit: string;
   ring40: string; ring60: string; ring80: string; archive: string; pick: string;
@@ -289,6 +304,8 @@ const AiConfigModal = ({
   nations,
   players = [1, 2],
   onAiPlayerChange,
+  commanders,
+  armies,
 }: { 
   isOpen: boolean; 
   onClose: () => void; 
@@ -299,9 +316,13 @@ const AiConfigModal = ({
   players?: number[];
   /** Human vs AI, before the battle: lets you choose which side you command. */
   onAiPlayerChange?: (aiPlayer: number) => void;
+  /** Each player's commander, shown on their general's panel. */
+  commanders?: { [player: number]: string };
+  armies?: { [player: number]: ArmyDoctrine };
 }) => {
   const versus = players.length === 1;
   const [localConfigs, setLocalConfigs] = useState(aiConfigs);
+  const [customOpen, setCustomOpen] = useState<{ [player: number]: boolean }>({});
 
   if (!isOpen) return null;
 
@@ -344,16 +365,28 @@ const AiConfigModal = ({
             const config = localConfigs[playerNum];
             const ai = resolveAiModel(config);
             const update = (patch: Partial<AiConfig>) => setLocalConfigs(prev => ({ ...prev, [playerNum]: { ...prev[playerNum], ...patch } }));
+            // An OpenRouter model typed in rather than picked from the list.
+            const customModel = ai.provider === 'openrouter' && (customOpen[playerNum] || (!!config.openrouterModel && !AI_MODELS.openrouter.some(m => m.id === config.openrouterModel)));
+            const levels = thinkingLevelsFor(ai.info);
             return (
             <div key={playerNum} className="space-y-4 p-4 border border-[#141414]/20 bg-white/50">
               <h3 className={cn("font-bold uppercase text-sm border-b border-[#141414] pb-2", SIDE_UI[nations[playerNum]].text)}>
                 Player {playerNum} · {NATIONS[nations[playerNum]].adjective}{versus && ' · AI general'}
+                {commanders?.[playerNum] && (
+                  <span className="flex items-center gap-2.5 mt-1.5 normal-case">
+                    <CommanderPortrait name={commanders[playerNum]} nation={nations[playerNum]} size={34} />
+                    <span className="min-w-0">
+                      <span className="block font-serif italic text-base text-[#141414] leading-tight">{commanders[playerNum]}</span>
+                      {armies?.[playerNum] && <span className="block text-[10px] font-mono uppercase text-[#141414]/60">{DOCTRINES[armies[playerNum]].name}</span>}
+                    </span>
+                  </span>
+                )}
               </h3>
               
               <div className="space-y-1">
                 <label className="text-[10px] uppercase font-bold opacity-60">AI Provider</label>
                 <div className="grid grid-cols-2 border border-[#141414]" role="radiogroup" aria-label={`Player ${playerNum}'s AI provider`}>
-                  {(['gemini', 'claude'] as AiProvider[]).map(p => (
+                  {PROVIDERS.map(p => (
                     <button
                       key={p}
                       role="radio"
@@ -364,8 +397,8 @@ const AiConfigModal = ({
                         ai.provider === p ? "bg-[#141414] text-[#E4E3E0]" : "bg-white hover:bg-[#141414]/10"
                       )}
                     >
-                      <span className="block text-xs font-bold uppercase">{AI_PROVIDERS[p].label}</span>
-                      <span className="block text-[9px] font-mono uppercase opacity-60">{AI_PROVIDERS[p].vendor}</span>
+                      <span className="flex items-center gap-1.5 text-xs font-bold uppercase"><ProviderIcon provider={p} size={14} /> {AI_PROVIDERS[p].label}</span>
+                      <span className="block text-[9px] font-mono uppercase opacity-60 truncate">{AI_PROVIDERS[p].vendor}</span>
                     </button>
                   ))}
                 </div>
@@ -376,7 +409,7 @@ const AiConfigModal = ({
                 <input 
                   type="password"
                   value={ai.apiKey}
-                  onChange={(e) => update(ai.provider === 'claude' ? { claudeApiKey: e.target.value } : { apiKey: e.target.value })}
+                  onChange={(e) => update(keyPatch(ai.provider, e.target.value))}
                   placeholder={AI_PROVIDERS[ai.provider].keyPlaceholder}
                   className="w-full p-2 bg-white border border-[#141414] font-mono text-xs focus:ring-1 focus:ring-[#141414] outline-none"
                 />
@@ -422,30 +455,78 @@ const AiConfigModal = ({
               )}
 
               <div className="space-y-1">
-                <label className="text-[10px] uppercase font-bold opacity-60">Model Selection</label>
-                <select 
-                  value={ai.model}
-                  onChange={(e) => update(ai.provider === 'claude' ? { claudeModel: e.target.value } : { model: e.target.value })}
+                <label htmlFor={`model-${playerNum}`} className="text-[10px] uppercase font-bold opacity-60">Model Selection</label>
+                <select
+                  id={`model-${playerNum}`}
+                  value={customModel ? CUSTOM_MODEL : ai.model}
+                  onChange={(e) => {
+                    const custom = e.target.value === CUSTOM_MODEL;
+                    setCustomOpen(prev => ({ ...prev, [playerNum]: custom }));
+                    update(modelPatch(ai.provider, custom ? '' : e.target.value));
+                  }}
                   className="w-full p-2 bg-white border border-[#141414] font-mono text-xs focus:ring-1 focus:ring-[#141414] outline-none"
                 >
                   {AI_MODELS[ai.provider].map(m => (
                     <option key={m.id} value={m.id}>{m.label}</option>
                   ))}
+                  {ai.provider === 'openrouter' && <option value={CUSTOM_MODEL}>Another OpenRouter model…</option>}
                 </select>
+                {customModel && (
+                  <>
+                    <input
+                      type="text"
+                      value={config.openrouterModel ?? ''}
+                      onChange={(e) => update(modelPatch('openrouter', e.target.value.trim()))}
+                      placeholder="maker/model, e.g. qwen/qwen3.8-flash"
+                      spellCheck={false}
+                      aria-label="OpenRouter model ID"
+                      className="w-full p-2 bg-white border border-[#141414] font-mono text-xs focus:ring-1 focus:ring-[#141414] outline-none"
+                    />
+                    <p className="text-[9px] font-mono opacity-60 leading-snug">
+                      {config.openrouterModel && !isOpenRouterId(config.openrouterModel)
+                        ? `Not a model ID; the general will use ${AI_MODELS.openrouter[0].label.replace(/ \(.*\)$/, '')}.`
+                        : 'Any model ID from openrouter.ai/models. Smaller models may struggle to give valid orders.'}
+                    </p>
+                  </>
+                )}
               </div>
 
               <div className="space-y-1">
-                <label className="text-[10px] uppercase font-bold opacity-60">Thinking Level</label>
-                <select
-                  value={ai.thinkingLevel}
-                  onChange={(e) => update({ thinkingLevel: e.target.value as ThinkingLevelSetting })}
-                  className="w-full p-2 bg-white border border-[#141414] font-mono text-xs focus:ring-1 focus:ring-[#141414] outline-none"
-                >
-                  {THINKING_LEVELS.map(l => (
-                    <option key={l.id} value={l.id}>{l.label}: {l.hint}</option>
-                  ))}
-                </select>
+                <label htmlFor={`thinking-${playerNum}`} className="text-[10px] uppercase font-bold opacity-60">Thinking Level</label>
+                {levels.length > 1 ? (
+                  <select
+                    id={`thinking-${playerNum}`}
+                    value={ai.thinkingLevel}
+                    onChange={(e) => update({ thinkingLevel: e.target.value as ThinkingLevelSetting })}
+                    className="w-full p-2 bg-white border border-[#141414] font-mono text-xs focus:ring-1 focus:ring-[#141414] outline-none"
+                  >
+                    {THINKING_LEVELS.filter(l => levels.includes(l.id)).map(l => (
+                      <option key={l.id} value={l.id}>{l.label}: {l.hint}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <p id={`thinking-${playerNum}`} className="p-2 border border-[#141414]/30 font-mono text-xs text-[#141414]/70">
+                    {levels.length === 1 ? `${THINKING_LEVELS.find(l => l.id === levels[0])!.label}: the only level this model offers`
+                      : ai.info.reasoning === 'none' ? 'None: this model answers without reasoning'
+                      : 'Built in: this model reasons, with no levels to choose'}
+                  </p>
+                )}
               </div>
+
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={config.inCharacter !== false}
+                  onChange={e => update({ inCharacter: e.target.checked })}
+                  className="accent-[#141414] mt-0.5"
+                />
+                <span>
+                  <span className="block text-[10px] uppercase font-bold opacity-60">In character</span>
+                  <span className="block text-[9px] font-mono opacity-50 leading-snug">
+                    Knows both commanders by name and writes like a {nations[playerNum] === 'french' ? 'French marshal (mon Dieu !)' : 'British general (steady, lads!)'}. Turn off for neutral prompts when comparing models.
+                  </span>
+                </span>
+              </label>
 
               <div className="space-y-1 pt-2 border-t border-[#141414]/10">
                 <label className="text-[10px] uppercase font-bold opacity-60">LangSmith API Key (Optional)</label>
@@ -479,10 +560,10 @@ const AiConfigModal = ({
         </div>
 
         <div className="text-[10px] uppercase opacity-50 font-mono leading-relaxed">
-          * Your API keys are kept in memory only and never saved to any server; requests go straight from this browser to Google or Anthropic.
+          * Your API keys are kept in memory only and never saved to any server; requests go straight from this browser to Google, Anthropic, OpenAI or OpenRouter.
           {versus
             ? ` You command Player ${3 - players[0]} (${NATIONS[nations[3 - players[0]]].adjective}); this general commands the enemy army.`
-            : ' Pit Gemini against Claude, or give each side a different model or thinking level, to see how they compete tactically.'}
+            : ' Pit Gemini, Claude, GPT and open models such as Llama, GLM or Gemma against each other, or give each side a different model or thinking level, to see how they compete tactically.'}
         </div>
 
         <div className="flex gap-4 mt-4">
@@ -522,6 +603,9 @@ In this battle your opponent is a human general, who will punish any regiment yo
 - Do not forget your cavalry. Hussars and chasseurs have 6 MP: every turn, send them round the flanks, after enemy light infantry and cannon, into the flank of line infantry, or toward the enemy Command Center.
 - Reinforcements count too: from the turn after they arrive, march them to the fight.`;
 
+/** Player 1's army first, then the other. */
+const nationsOrder = (p1: Nation): Nation[] => (p1 === 'british' ? ['british', 'french'] : ['french', 'british']);
+
 /** CLI commands that only show information, so they also work on an AI general's turn. */
 /** Human vs AI: the AI general's regiments not yet used this turn, shown with every reply. */
 const rollCall = (state: GameState, lastIteration: boolean) => {
@@ -546,8 +630,8 @@ export default function App() {
   const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(() => !startsCompact());
   const [menuOpen, setMenuOpen] = useState(false);
   const [isAiThinking, setIsAiThinking] = useState(false);
-  const [aiMonologue, setAiMonologue] = useState<string | null>(null);
-  const [dispatchExpanded, setDispatchExpanded] = useState(false);
+  // Dispatches up to this time were closed by the player; a newer one shows again.
+  const [dispatchClosedAt, setDispatchClosedAt] = useState(0);
   const [dispatchMinimized, setDispatchMinimized] = useState(() => {
     try {
       return localStorage.getItem('regiments.dispatch') === 'minimized';
@@ -565,6 +649,7 @@ export default function App() {
   const [seedInput, setSeedInput] = useState(randomSeed);
   const [reportHidden, setReportHidden] = useState(false);
   const [battleHistory, setBattleHistory] = useState<BattleRecord[]>(loadBattles);
+  const [showRecords, setShowRecords] = useState(false);
   const [isArchiveOpen, setIsArchiveOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'3d' | '2d'>(() => {
     try {
@@ -580,6 +665,30 @@ export default function App() {
       return 'british';
     }
   });
+  // The general commanding each army, kept per army in this browser (historical names by default).
+  const [commanderNames, setCommanderNames] = useState<Record<Nation, string>>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('regiments.commanders') ?? '{}');
+      return {
+        british: typeof saved.british === 'string' ? saved.british : DEFAULT_COMMANDERS.british,
+        french: typeof saved.french === 'string' ? saved.french : DEFAULT_COMMANDERS.french,
+      };
+    } catch {
+      return { ...DEFAULT_COMMANDERS };
+    }
+  });
+  // The army each nation fields, kept per army like the commanders (combined arms by default).
+  const [doctrineByNation, setDoctrineByNation] = useState<Record<Nation, ArmyDoctrine>>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('regiments.doctrines') ?? '{}');
+      return { british: isDoctrine(saved.british) ? saved.british : 'balanced', french: isDoctrine(saved.french) ? saved.french : 'balanced' };
+    } catch {
+      return { british: 'balanced', french: 'balanced' };
+    }
+  });
+  // Generals the player gave a portrait, offered again by name; and whose portrait is being edited.
+  const customPortraits = useCustomPortraits();
+  const [portraitFor, setPortraitFor] = useState<Nation | null>(null);
   const aiTurnRef = useRef<{ turn: number, player: number } | null>(null);
   // Bumped when a battle is abandoned, so an AI turn still in flight stops touching the game.
   const battleRef = useRef(0);
@@ -596,8 +705,6 @@ export default function App() {
     }
   }, [dispatchMinimized]);
 
-  // Each new dispatch starts as a short preview.
-  useEffect(() => setDispatchExpanded(false), [aiMonologue]);
 
   useEffect(() => {
     try {
@@ -609,34 +716,53 @@ export default function App() {
 
   useEffect(() => {
     try {
+      localStorage.setItem('regiments.commanders', JSON.stringify(commanderNames));
+    } catch {
+      /* storage unavailable */
+    }
+  }, [commanderNames]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('regiments.doctrines', JSON.stringify(doctrineByNation));
+    } catch {
+      /* storage unavailable */
+    }
+  }, [doctrineByNation]);
+
+  useEffect(() => {
+    try {
       localStorage.setItem('regiments.p1Nation', p1Nation);
     } catch {
       /* storage unavailable */
     }
   }, [p1Nation]);
 
-  /** Fresh battle with the chosen armies (the map is regenerated too). */
   /**
    * Fresh battle on the map code from the start screen (or the one given), with the chosen
    * armies. In Human vs AI the view starts from your side of the field.
    */
-  const startGame = (mode: GameMode, aiConfigs: { [key: number]: AiConfig }, opts: { seed?: string; nations?: { [player: number]: Nation }; aiPlayer?: number } = {}) => {
+  const startGame = (mode: GameMode, aiConfigs: { [key: number]: AiConfig }, opts: { seed?: string; nations?: { [player: number]: Nation }; aiPlayer?: number; doctrines?: { [player: number]: ArmyDoctrine } } = {}) => {
     battleRef.current++;
     aiTurnRef.current = null;
     setIsAiThinking(false);
-    setAiMonologue(null);
+    setDispatchClosedAt(0);
     setAiPaused(false);
     setAiStalled(false);
     setReportHidden(false);
     const seed = opts.seed ?? (normalizeSeed(seedInput) || randomSeed());
     const aiPlayer = mode === 'versus' ? opts.aiPlayer ?? versusAiPlayer : undefined;
+    const nations = opts.nations ?? nationsFor(p1Nation);
+    const commander = (p: number) => normalizeCommander(commanderNames[nations[p]]) || DEFAULT_COMMANDERS[nations[p]];
+    const doctrines = opts.doctrines ?? { 1: doctrineByNation[nations[1]], 2: doctrineByNation[nations[2]] };
     setMapRotation(aiPlayer === 1 ? 180 : 0);
-    setGameState({ ...getInitialState(opts.nations ?? nationsFor(p1Nation), seed), gameMode: mode, aiConfigs, aiPlayer });
+    setGameState({ ...getInitialState(nations, seed, doctrines), gameMode: mode, aiConfigs, aiPlayer, commanders: { 1: commander(1), 2: commander(2) } });
   };
 
   /**
    * The same map again. Swapping sides gives each general the other army's starting
-   * position and turn order; each keeps its own army (and, against an AI, you keep yours).
+   * position and turn order; each keeps its own army and its composition (and, against an
+   * AI, you keep yours).
    */
   const rematch = (swapSides: boolean) => {
     const s = gameState;
@@ -648,7 +774,7 @@ export default function App() {
     const aiPlayer = s.gameMode === 'versus' ? (swapSides ? humanPlayerOf(s) : aiPlayerOf(s)) : undefined;
     setP1Nation(nations[1]);
     if (aiPlayer) setVersusAiPlayer(aiPlayer);
-    startGame(s.gameMode, flip<AiConfig>(s.aiConfigs), { seed: s.seed, nations, aiPlayer });
+    startGame(s.gameMode, flip<AiConfig>(s.aiConfigs), { seed: s.seed, nations, aiPlayer, doctrines: flip<ArmyDoctrine>({ 1: doctrineOf(s, 1), 2: doctrineOf(s, 2) }) });
   };
 
   useEffect(() => {
@@ -666,7 +792,10 @@ export default function App() {
 
   const getGameStateString = useCallback((state: GameState = gameState) => {
     let stateStr = `--- BATTLEFIELD STATUS (Turn ${state.turn}) ---\n`;
-    stateStr += `Armies: Player 1 = ${NATIONS[nationOf(state, 1)].adjective}, Player 2 = ${NATIONS[nationOf(state, 2)].adjective}\n`;
+    // Army compositions are named only when a side fields a special one, so standard games read as before.
+    const special = doctrineOf(state, 1) !== 'balanced' || doctrineOf(state, 2) !== 'balanced';
+    const army = (p: number) => NATIONS[nationOf(state, p)].adjective + (special ? ` (${DOCTRINES[doctrineOf(state, p)].name})` : '');
+    stateStr += `Armies: Player 1 = ${army(1)}, Player 2 = ${army(2)}\n`;
     stateStr += `Current Player: Player ${state.currentPlayer}\n`;
     stateStr += `Supply: P1: ${state.supply[1]}, P2: ${state.supply[2]}\n`;
     stateStr += `Reinforcement costs: ${Object.entries(UNIT_COSTS).map(([t, c]) => `${t} ${c}`).join(', ')}\n`;
@@ -746,6 +875,7 @@ export default function App() {
   };
 
   const selectedUnit = gameState.regiments.find(r => r.id === gameState.selectedUnitId);
+  const latestDispatch = gameState.monologueHistory[gameState.monologueHistory.length - 1];
   // On an AI general's turn a person can look over the field, but not give orders.
   const humanTurn = !isAiPlayer(gameState, gameState.currentPlayer);
   const commandable = (r: Regiment | undefined): r is Regiment => !!r && humanTurn && r.owner === gameState.currentPlayer;
@@ -1611,7 +1741,6 @@ export default function App() {
     }
 
     setIsAiThinking(true);
-    setAiMonologue(null);
     
     // LangSmith tracing setup
     let parentRunId: string | undefined;
@@ -1651,7 +1780,10 @@ export default function App() {
         apiKey,
         model,
         thinkingLevel,
-        systemInstruction: aiInstructions + (gameState.gameMode === 'versus' ? VERSUS_BRIEFING : ''),
+        systemInstruction: aiInstructions
+          + (gameState.gameMode === 'versus' ? VERSUS_BRIEFING : '')
+          + (inCharacter(gameState, gameState.currentPlayer) ? personaBriefing(gameState, gameState.currentPlayer) : '')
+          + doctrineBriefing(gameState, gameState.currentPlayer),
         useVertexAI: config.useVertexAI,
       });
       session = chat;
@@ -1696,7 +1828,7 @@ ${turnOutput ? `\nRESULTS OF YOUR COMMANDS SO FAR THIS TURN:\n${turnOutput}\n` :
 CURRENT GAME STATE:
 ${getGameStateString(currentGameState)}
 
-You are Player ${currentGameState.currentPlayer} (${NATIONS[nationOf(currentGameState, currentGameState.currentPlayer)].adjective}). Turn ${currentGameState.turn}, iteration ${iteration + 1} of 5.
+${inCharacter(currentGameState, currentGameState.currentPlayer) ? whoIsWho(currentGameState, currentGameState.currentPlayer) : `You are Player ${currentGameState.currentPlayer} (${NATIONS[nationOf(currentGameState, currentGameState.currentPlayer)].adjective}).`} Turn ${currentGameState.turn}, iteration ${iteration + 1} of 5.
 Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE code block with your commands.
 - The commands run in order, and you will see their results in the next iteration.
 - Every regiment's MP refills each turn, and MP you leave unused is lost.
@@ -1753,7 +1885,6 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
         // Extract monologue (text before the first code block)
         const monologue = responseText.split('```')[0].trim();
         if (monologue) {
-          setAiMonologue(monologue);
           const newMonologueEntry = {
             turn: currentGameState.turn,
             player: currentGameState.currentPlayer,
@@ -1851,8 +1982,6 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
         });
       }
 
-      // Clear monologue after turn ends
-      setTimeout(() => setAiMonologue(null), 3000);
     } catch (error: any) {
       console.error("AI Turn Error:", error);
       if (!live()) return;
@@ -1860,7 +1989,8 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
       if (session?.isRateLimit(error)) {
         addBattlefieldLog(`CRITICAL: AI Player ${gameState.currentPlayer} hit API rate limits. Please wait a minute before trying again or use a paid API key.`);
       } else {
-        addBattlefieldLog("AI encountered an error during its turn.");
+        const why = session?.explain?.(error);
+        addBattlefieldLog(why ? `AI encountered an error during its turn: ${why}` : "AI encountered an error during its turn.");
       }
       
       // Update LangSmith parent run with error
@@ -1903,7 +2033,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
     battleRef.current++;
     aiTurnRef.current = null;
     setIsAiThinking(false);
-    setAiMonologue(null);
+    setDispatchClosedAt(0);
     setAiPaused(false);
     setAiStalled(false);
     setReportHidden(false);
@@ -1932,7 +2062,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
       turns: s.turn,
       winner: s.winner,
       victory: victoryReason(s),
-      sides: [1, 2].map(p => ({ player: p, nation: nationOf(s, p), general: generalOf(s, p), ...sideStats(s, p) })),
+      sides: [1, 2].map(p => ({ player: p, nation: nationOf(s, p), army: DOCTRINES[doctrineOf(s, p)].name, general: generalOf(s, p), ...sideStats(s, p) })),
       timeline: s.timeline,
       dispatches: s.monologueHistory,
       battlefieldLog: s.battlefieldLogs,
@@ -1993,10 +2123,73 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
             </p>
           </div>
 
+          <div className="space-y-2">
+            <p className="text-[10px] uppercase tracking-widest font-mono opacity-50 text-center">Commanders &amp; armies</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {nationsOrder(p1Nation).map(n => {
+                const player = n === p1Nation ? 1 : 2;
+                const roll = () => {
+                  const others = COMMANDERS[n].filter(c => c !== normalizeCommander(commanderNames[n]));
+                  setCommanderNames(c => ({ ...c, [n]: others[Math.floor(Math.random() * others.length)] }));
+                };
+                return (
+                  <div key={n} className="border border-[#141414]/15">
+                    <div className="flex items-center gap-2 pl-2 pr-1 py-1.5">
+                      <button
+                        onClick={() => setPortraitFor(n)}
+                        className="relative shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[#141414] focus-visible:ring-offset-2"
+                        aria-label={`Change ${normalizeCommander(commanderNames[n]) || DEFAULT_COMMANDERS[n]}'s portrait`}
+                        title="Change the portrait"
+                      >
+                        <CommanderPortrait name={normalizeCommander(commanderNames[n]) || DEFAULT_COMMANDERS[n]} nation={n} size={36} />
+                        <span className="absolute -bottom-1 -right-1 w-[18px] h-[18px] rounded-full bg-[#141414] text-[#E4E3E0] border-2 border-white flex items-center justify-center" aria-hidden>
+                          <Camera size={9} />
+                        </span>
+                      </button>
+                      <span className="text-[9px] font-mono uppercase opacity-60 shrink-0">P{player}</span>
+                      <input
+                        list={`commanders-${n}`}
+                        value={commanderNames[n]}
+                        onChange={e => setCommanderNames(c => ({ ...c, [n]: e.target.value.slice(0, 40) }))}
+                        onBlur={() => setCommanderNames(c => ({ ...c, [n]: normalizeCommander(c[n]) || DEFAULT_COMMANDERS[n] }))}
+                        placeholder={DEFAULT_COMMANDERS[n]}
+                        aria-label={`${NATIONS[n].adjective} commander`}
+                        className="flex-1 min-w-0 bg-transparent font-serif italic text-lg py-1 outline-none focus:underline"
+                      />
+                      <datalist id={`commanders-${n}`}>
+                        {[...COMMANDERS[n], ...customPortraits.filter(c => c.nation === n && !COMMANDERS[n].includes(c.name)).map(c => c.name)].map(c => <option key={c} value={c} />)}
+                      </datalist>
+                      <button
+                        onClick={roll}
+                        className="h-9 w-9 shrink-0 flex items-center justify-center hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
+                        title={`Another ${NATIONS[n].adjective} commander of the period`}
+                        aria-label={`Another ${NATIONS[n].adjective} commander`}
+                      >
+                        <Shuffle size={14} />
+                      </button>
+                    </div>
+                    <ArmyPicker nation={n} player={player} value={doctrineByNation[n]} onChange={d => setDoctrineByNation(c => ({ ...c, [n]: d }))} />
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-[10px] font-mono text-center opacity-50">
+              Pick a marshal or general of the period, or type any name and tap the portrait to give them your own. The armies cost about the same; an AI general fights to its army's strengths.
+            </p>
+            {portraitFor && (
+              <PortraitEditor
+                name={normalizeCommander(commanderNames[portraitFor]) || DEFAULT_COMMANDERS[portraitFor]}
+                nation={portraitFor}
+                onClose={() => setPortraitFor(null)}
+              />
+            )}
+          </div>
+
           <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-5 border border-[#141414]/15 p-4">
             {(() => {
               const code = normalizeSeed(seedInput);
-              const preview = code ? getInitialState(nationsFor(p1Nation), code) : null;
+              const nations = nationsFor(p1Nation);
+              const preview = code ? getInitialState(nations, code, { 1: doctrineByNation[nations[1]], 2: doctrineByNation[nations[2]] }) : null;
               return preview
                 ? <MapPreview map={preview.map} regiments={preview.regiments} nations={preview.nations} size={112} />
                 : <div className="w-[112px] h-[112px] shrink-0 border border-dashed border-[#141414]/30 flex items-center justify-center text-[9px] font-mono uppercase opacity-50 text-center p-2">Random map</div>;
@@ -2066,6 +2259,8 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
             onClose={() => setShowAiConfig(false)}
             aiConfigs={gameState.aiConfigs}
             nations={nationsFor(p1Nation)}
+            commanders={{ 1: normalizeCommander(commanderNames[p1Nation]) || DEFAULT_COMMANDERS[p1Nation], 2: normalizeCommander(commanderNames[nationsFor(p1Nation)[2]]) || DEFAULT_COMMANDERS[nationsFor(p1Nation)[2]] }}
+            armies={{ 1: doctrineByNation[p1Nation], 2: doctrineByNation[nationsFor(p1Nation)[2]] }}
             players={aiSetupMode === 'versus' ? [versusAiPlayer] : [1, 2]}
             onAiPlayerChange={setVersusAiPlayer}
             onSave={(configs) => {
@@ -2074,10 +2269,27 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
             }}
           />
 
+          <button
+            onClick={() => setShowRecords(true)}
+            className="w-full p-3 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex items-center justify-center gap-3 group"
+          >
+            <Trophy size={18} className="group-hover:scale-110 transition-transform" />
+            <span className="text-sm font-bold uppercase">Records &amp; leaderboard</span>
+            <span className="text-[10px] font-mono opacity-60">{battleHistory.length} battle{battleHistory.length === 1 ? '' : 's'}</span>
+          </button>
+
           <div className="border-t border-[#141414]/10 pt-6 text-center">
             <p className="text-[10px] uppercase font-mono opacity-40">Bring your own API keys!</p>
           </div>
         </div>
+        {showRecords && (
+          <RecordsView
+            records={battleHistory}
+            onChange={setBattleHistory}
+            onClose={() => setShowRecords(false)}
+            onPlayMap={seed => { setSeedInput(seed); setShowRecords(false); }}
+          />
+        )}
       </div>
     );
   }
@@ -2090,12 +2302,13 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
         <h1 className="hidden sm:block text-lg font-bold tracking-tighter uppercase italic font-serif shrink-0">Regiments</h1>
         <div className="flex-1 min-w-0 flex items-center gap-3 overflow-x-auto">
           <div className="leading-tight shrink-0">
-            <p className={cn("text-sm font-bold uppercase whitespace-nowrap", side(gameState.currentPlayer).text)}>
-              P{gameState.currentPlayer} · {NATIONS[nationOf(gameState, gameState.currentPlayer)].adjective}
+            <p className={cn("text-sm font-bold font-serif italic whitespace-nowrap max-w-[11rem] truncate", side(gameState.currentPlayer).text)}>
+              {commanderOf(gameState, gameState.currentPlayer)}
             </p>
-            <p className="text-[9px] font-mono uppercase opacity-60 whitespace-nowrap flex items-center gap-1">
-              {isAiThinking && <Cpu size={9} className="animate-spin" />}
-              {!humanTurn ? describeModel(gameState.aiConfigs[gameState.currentPlayer]) : gameState.gameMode === 'versus' ? 'Your command' : 'To move'}
+            <p className="text-[9px] font-mono uppercase opacity-70 whitespace-nowrap flex items-center gap-1">
+              {!humanTurn
+                ? <><ProviderIcon provider={resolveAiModel(gameState.aiConfigs[gameState.currentPlayer]).provider} model={resolveAiModel(gameState.aiConfigs[gameState.currentPlayer]).model} size={10} className={isAiThinking ? 'animate-pulse' : ''} /> {describeModel(gameState.aiConfigs[gameState.currentPlayer])}</>
+                : `P${gameState.currentPlayer} · ${NATIONS[nationOf(gameState, gameState.currentPlayer)].adjective}${gameState.gameMode === 'versus' ? ' · your command' : ''}`}
             </p>
           </div>
           {[
@@ -2236,12 +2449,12 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
             <p className="text-xl font-bold font-mono">{gameState.turn}</p>
           </div>
           <div className="text-right">
-            <p className="text-[10px] uppercase opacity-50 font-mono italic">Active Player · {NATIONS[nationOf(gameState, gameState.currentPlayer)].adjective}</p>
+            <p className="text-[10px] uppercase opacity-50 font-mono italic">Player {gameState.currentPlayer} · {NATIONS[nationOf(gameState, gameState.currentPlayer)].adjective}</p>
             <p className={cn(
-              "text-xl font-bold uppercase",
+              "text-xl font-bold font-serif italic whitespace-nowrap",
               side(gameState.currentPlayer).text
             )}>
-              Player {gameState.currentPlayer}
+              {commanderOf(gameState, gameState.currentPlayer)}
             </p>
             {gameState.gameMode === 'versus' && humanTurn && (
               <p className="text-[9px] uppercase font-mono tracking-wider opacity-60 flex items-center justify-end gap-1 whitespace-nowrap">
@@ -2250,10 +2463,9 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
             )}
             {!humanTurn && (() => {
               const ai = resolveAiModel(gameState.aiConfigs[gameState.currentPlayer]);
-              const model = AI_MODELS[ai.provider].find(m => m.id === ai.model)?.label.replace(/ \(.*\)$/, '') ?? ai.model;
               return (
-                <p className="text-[9px] uppercase font-mono tracking-wider opacity-60 flex items-center justify-end gap-1 whitespace-nowrap">
-                  <Cpu size={10} /> {model} · {ai.thinkingLevel}
+                <p className="text-[9px] uppercase font-mono tracking-wider opacity-70 flex items-center justify-end gap-1 whitespace-nowrap">
+                  <ProviderIcon provider={ai.provider} model={ai.model} size={12} /> {describeModel(gameState.aiConfigs[gameState.currentPlayer])}
                 </p>
               );
             })()}
@@ -2293,60 +2505,18 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
       )}
 
       <main className="flex-1 flex overflow-hidden relative">
-        {/* With the HUD column hidden, the AI general's dispatch floats as a compact card in the
-            map's top-right corner: three lines by default, expandable, or minimised to a tab. */}
-        <AnimatePresence>
-          {aiMonologue && !isRightSidebarOpen && (dispatchMinimized ? (
-            <motion.button
-              key="dispatch-tab"
-              initial={{ opacity: 0, y: -8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              onClick={() => setDispatchMinimized(false)}
-              className={cn(
-                "absolute z-[60] top-4 px-3 py-2 border-2 bg-white/90 backdrop-blur-sm shadow-lg flex items-center gap-2 font-bold uppercase text-[9px] tracking-wider",
-                compact ? "right-2 top-14" : "right-4",
-                side(gameState.currentPlayer).bubble
-              )}
-              aria-label="Show the AI general's dispatch"
-            >
-              <Cpu size={12} /> General {gameState.currentPlayer}'s dispatch
-              <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
-            </motion.button>
-          ) : (
-            <motion.div
-              key="dispatch"
-              initial={{ opacity: 0, y: -8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              className={cn(
-                "absolute z-[60] top-4 w-[min(380px,calc(100%-1rem))] border-2 bg-white/90 backdrop-blur-sm shadow-xl",
-                compact ? "right-2 top-14" : "right-4",
-                side(gameState.currentPlayer).bubble
-              )}
-            >
-              <div className="flex items-center justify-between gap-2 px-4 pt-3 font-bold uppercase text-[9px] tracking-wider opacity-60">
-                <span className="flex items-center gap-2"><Cpu size={10} /> AI General {gameState.currentPlayer} · Dispatch</span>
-                <button onClick={() => setDispatchMinimized(true)} className="p-0.5 hover:opacity-100" aria-label="Minimise the dispatch">
-                  <Minus size={12} />
-                </button>
-              </div>
-              {dispatchExpanded ? (
-                <Markdown text={aiMonologue} className="px-4 pt-1 max-h-[40vh] overflow-y-auto space-y-1.5 font-serif italic text-xs leading-relaxed" />
-              ) : (
-                <p className="px-4 pt-1 font-serif italic text-xs leading-relaxed line-clamp-3">{plainText(aiMonologue)}</p>
-              )}
-              {aiMonologue.length > 180 ? (
-                <button
-                  onClick={() => setDispatchExpanded(v => !v)}
-                  className="px-4 pt-1 pb-3 font-bold uppercase text-[9px] tracking-wider opacity-60 hover:opacity-100"
-                >
-                  {dispatchExpanded ? 'Show less' : 'Read full dispatch'}
-                </button>
-              ) : <div className="pb-3" />}
-            </motion.div>
-          ))}
-        </AnimatePresence>
+        {/* The latest AI dispatch, as a speech bubble from its general beside the HUD column:
+            minimisable to a tab, or closed until the next dispatch. */}
+        {latestDispatch && !gameState.winner && latestDispatch.timestamp > dispatchClosedAt && (
+          <DispatchBubble
+            state={gameState}
+            entry={latestDispatch}
+            minimized={dispatchMinimized}
+            onMinimize={setDispatchMinimized}
+            onClose={() => setDispatchClosedAt(latestDispatch.timestamp)}
+            className={compact ? 'top-14 right-2' : cn('top-14', isRightSidebarOpen ? 'right-[17rem]' : 'right-4')}
+          />
+        )}
 
         {compact && (isLeftSidebarOpen || isRightSidebarOpen) && (
           <div className="absolute inset-0 z-[70] bg-[#141414]/30" onClick={closePanels} aria-hidden />
@@ -2775,6 +2945,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
         onClose={() => setShowAiConfig(false)}
         aiConfigs={gameState.aiConfigs}
         nations={gameState.nations}
+        commanders={{ 1: commanderOf(gameState, 1), 2: commanderOf(gameState, 2) }}
         players={gameState.gameMode === 'versus' ? [aiPlayerOf(gameState)] : [1, 2]}
         onSave={(configs) => {
           setGameState(prev => ({ ...prev, aiConfigs: configs }));
@@ -2793,7 +2964,11 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
               onExport={exportReport}
               onViewField={() => { setReportHidden(true); if (compact) closePanels(); }}
               onNewCampaign={resetGame}
+              onOpenRecords={() => setShowRecords(true)}
             />
+          )}
+          {showRecords && gameState.gameMode !== null && (
+            <RecordsView records={battleHistory} onChange={setBattleHistory} onClose={() => setShowRecords(false)} />
           )}
           {gameState.winner && reportHidden && (
             <button
@@ -2874,21 +3049,6 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
                   </div>
                 </section>
 
-                {/* The latest AI dispatch lives here, off the map, so it never hides the troops. */}
-                {gameState.monologueHistory.length > 0 && (() => {
-                  const latest = gameState.monologueHistory[gameState.monologueHistory.length - 1];
-                  return (
-                    <section>
-                      <h2 className="flex items-center justify-between text-[11px] uppercase tracking-widest opacity-50 font-serif italic mb-4">
-                        <span>General {latest.player}'s Dispatch</span>
-                        <span className="not-italic font-mono text-[9px]">Turn {latest.turn}</span>
-                      </h2>
-                      <div className={cn("p-3 border-l-2 max-h-[38vh] overflow-y-auto custom-scrollbar", side(latest.player).archive)}>
-                        <Markdown text={latest.text} className="space-y-1.5 font-serif italic text-[11px] leading-relaxed text-[#141414]/85" />
-                      </div>
-                    </section>
-                  );
-                })()}
 
                 <section>
                   <button 
@@ -2917,7 +3077,7 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
                                 side(m.player).archive
                               )}>
                                 <div className="flex justify-between items-center mb-1 opacity-60 font-bold uppercase text-[8px]">
-                                  <span>Turn {m.turn} - Player {m.player}</span>
+                                  <span>Turn {m.turn} · {commanderOf(gameState, m.player)}</span>
                                   <span>{new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                                 </div>
                                 <Markdown text={m.text} className="space-y-1 font-serif italic text-[#141414]/80" />
@@ -3003,6 +3163,8 @@ Reply with a short dispatch (2-5 sentences: your plan for this turn), then ONE c
           )}
         </AnimatePresence>
       </main>
+
+      <TurnBanner state={gameState} compact={compact} />
 
       {/* Phone command bar: the panels, the selected regiment's orders and End Turn, within thumb's reach */}
       {compact && (
